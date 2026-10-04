@@ -1,0 +1,54 @@
+/* Design tokens — base del sistema ARMA TU MATRIZ (Figma 9Qr4Fw7Ws9aTNRdbPejnqy).
+   Every component reads these; the look changes here, not per screen. */
+
+@font-face { font-family: 'Alte Haas Grotesk'; font-weight: 400; font-display: swap; src: url('./fuentes/alte-haas-regular.woff') format('woff'); }
+@font-face { font-family: 'Alte Haas Grotesk'; font-weight: 700; font-display: swap; src: url('./fuentes/alte-haas-bold.woff') format('woff'); }
+@font-face { font-family: 'Work Sans'; font-weight: 400; font-display: swap; src: url('./fuentes/work-sans-regular.woff') format('woff'); }
+@font-face { font-family: 'Work Sans'; font-weight: 500; font-display: swap; src: url('./fuentes/work-sans-medium.woff') format('woff'); }
+@font-face { font-family: 'Work Sans'; font-weight: 600; font-display: swap; src: url('./fuentes/work-sans-semibold.woff') format('woff'); }
+
+:root {
+  /* Type */
+  --font-label: 'Alte Haas Grotesk', 'Work Sans', system-ui, sans-serif;
+  --font-body: 'Work Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --label-size: 11px;      /* ETIQUETA WEB MOBILE: 11/12, tracking 2, uppercase */
+  --label-line: 12px;
+  --label-track: 2px;
+  --body-size: 12px;       /* CUERPO CHICO WEB MOBILE: 12/16 */
+  --body-line: 16px;
+  --text-size: 14px;       /* reading text (ficha, guía): one step up for legibility */
+  --text-line: 20px;
+
+  /* Colour */
+  --black: #000;
+  --white: #fff;
+  --control: #f4f4f4;      /* buttons, pills, field, the bottom sheet */
+  --sheet: #f4f4f4;
+  --muted: #717171;        /* secondary labels (the body size under the case) */
+  --placeholder: #5c5c5c;
+  --handle: #9d9d9d;       /* sheet handle, scrollbar, slider fill */
+  --track: #fff;
+  --card: #eeece5;         /* the canvas card */
+  --sort: #bbbcb6;         /* a sort's body */
+  --sort-edge: rgba(0, 0, 0, .18);
+  --furniture: #8d978f;    /* leads and furniture */
+  --accent: #ea5144;       /* the selection / caret red of the palette */
+  --ink: #000;
+
+  /* Shape and space */
+  --radius: 5px;
+  --radius-sheet: 25px;
+  --control-h: 33px;
+  --icon-w: 34px;
+  --gutter: 20px;
+  --gap: 8px;
+  --touch: 44px;           /* minimum tappable area, even when a control looks smaller */
+
+  font-family: var(--font-body);
+  font-size: var(--body-size);
+  line-height: var(--body-line);
+  color: var(--black);
+  background: var(--white);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}

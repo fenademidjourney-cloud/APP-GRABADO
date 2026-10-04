@@ -1,0 +1,224 @@
+/* Base de la interfaz — las piezas genéricas de ARMA TU MATRIZ, sin nada propio
+   de esa app (tipos, matriz, pliego). Mobile first (390 × 844); desde 900 px las
+   mismas piezas se reparten en dos columnas. Todos los valores salen de tokens.css:
+   importá tokens.css ANTES que este archivo. */
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; width: 100%; height: 100%; }
+body { overflow: hidden; background: var(--white); overscroll-behavior: none; }
+button, input, select { font: inherit; color: inherit; }
+button { -webkit-tap-highlight-color: transparent; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--black); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; font-weight: inherit; }
+
+/* Etiqueta: 11/12, tracking 2, mayúsculas, Alte Haas. */
+.label {
+  font-family: var(--font-label); font-size: var(--label-size); line-height: var(--label-line);
+  letter-spacing: var(--label-track); text-transform: uppercase; font-weight: 400;
+}
+
+/* ---------------- Shell: header · modo (main + side) ---------------- */
+.app-shell {
+  height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: var(--white);
+  padding-top: env(safe-area-inset-top);
+}
+.hdr { flex: 0 0 auto; display: flex; align-items: center; gap: var(--gap); padding: 11px var(--gutter) 0; }
+.brand {
+  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;
+  font-family: var(--font-label); font-weight: 700; font-size: var(--label-size); line-height: var(--label-line);
+  letter-spacing: var(--label-track); text-transform: uppercase;
+}
+.hdr .pill .ibtn { width: 41px; }
+
+.mode { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: var(--gap); }
+.mode-main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); padding: 0 var(--gutter); }
+.mode-side { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+
+/* ---------------- Botones de ícono y pastillas ---------------- */
+.pill { display: inline-flex; align-items: stretch; height: var(--control-h); background: var(--control); border-radius: var(--radius); }
+.pill-white { background: var(--white); }
+.ibtn {
+  position: relative; flex: 0 0 auto; width: var(--icon-w); height: var(--control-h); padding: 0; border: 0; border-radius: var(--radius);
+  display: grid; place-items: center; background: transparent; color: var(--black); transition: background .12s, color .12s;
+}
+.ibtn::before { content: ''; position: absolute; inset: -6px -1px; }  /* se toca más grande de lo que se ve */
+.ibtn.on { background: var(--black); color: var(--white); }
+.ibtn:disabled { opacity: .3; cursor: default; }
+.ibtn.solo { width: 37px; background: var(--control); }
+.ibtn-badge { position: absolute; right: 3px; bottom: 1px; font-family: var(--font-label); font-weight: 700; font-size: 9px; line-height: 1; }
+
+/* Fila de herramientas bajo el lienzo: las pastillas se reparten el ancho. */
+.toolrow { --control-h: 40px; display: flex; gap: var(--gap); padding: 0 var(--gutter); align-items: stretch; }
+.toolrow > .pill { flex: 1 1 0; min-width: 0; padding: 0 4px; justify-content: space-between; }
+.toolrow > .pill .ibtn { flex: 1 1 0; width: auto; max-width: 48px; }
+.toolrow > .ibtn.solo { width: 40px; }
+
+/* Campo de texto: 16 px para que iOS no haga zoom al enfocar. */
+.field {
+  flex: 0 0 auto; width: 100%; height: var(--control-h); border: 0; border-radius: var(--radius); background: var(--control);
+  padding: 0 12px; text-align: center; font-family: var(--font-body); font-size: 16px; color: var(--black); outline: none;
+}
+.field::placeholder { color: var(--placeholder); font-size: 13px; }
+.field:focus-visible { box-shadow: inset 0 0 0 1.5px var(--black); }
+
+/* ---------------- Tarjeta del lienzo ---------------- */
+.card {
+  position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; border-radius: var(--radius); background: var(--card);
+  display: flex; align-items: center; justify-content: center; touch-action: none;
+}
+.card-btn { position: absolute; z-index: 6; top: 6px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: var(--black); }
+.card-btn.left { left: 6px; background: var(--white); }
+.card-btn.right { right: 6px; }
+.card-btn.on { background: var(--black); color: var(--white); }
+
+/* Aviso breve sobre el lienzo (región viva). */
+.notice:empty { display: none; }
+.notice {
+  position: absolute; z-index: 20; top: 46px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px);
+  padding: 8px 12px; border-radius: var(--radius); background: var(--black); color: var(--white); text-align: center;
+  font-family: var(--font-label); font-weight: 700; font-size: 11px; line-height: 14px; letter-spacing: 1.5px; pointer-events: none;
+}
+
+/* Barra flotante de selección. */
+.float-bar {
+  position: absolute; z-index: 8; left: 50%; bottom: 10px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px;
+  padding: 0 4px; border-radius: var(--radius); background: var(--white); box-shadow: 0 4px 16px rgba(0,0,0,.14);
+}
+
+/* ---------------- Hoja inferior ---------------- */
+.sheet {
+  flex: 0 0 auto; height: var(--sheet-h, 218px); max-height: 60dvh; display: flex; flex-direction: column;
+  background: var(--sheet); border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; padding-bottom: env(safe-area-inset-bottom);
+}
+.sheet-handle { flex: 0 0 auto; height: 16px; display: flex; justify-content: center; padding-top: 3px; cursor: ns-resize; touch-action: none; }
+.sheet-handle span { width: 100px; height: 2px; border-radius: 49px; background: var(--handle); }
+.sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; padding: 4px var(--gutter) 18px; scrollbar-width: thin; scrollbar-color: var(--handle) transparent; }
+.sheet-body::-webkit-scrollbar { width: 4px; }
+.sheet-body::-webkit-scrollbar-thumb { background: var(--handle); border-radius: 49px; }
+.sheet-title { display: block; margin: 4px 0 6px; font-weight: 700; }
+.sheet-note { margin: 6px 0 10px; font-size: 12px; line-height: 16px; color: var(--placeholder); }
+.panel-body > .label, .advanced-body > .label { display: block; margin: 16px 0 8px; }
+.panel-body > .label:first-child { margin-top: 4px; }
+
+/* ---------------- Controles ---------------- */
+.segmented { display: flex; background: var(--white); border-radius: var(--radius); }
+.segmented button { flex: 1 1 0; min-width: 0; height: var(--control-h); border: 0; border-radius: var(--radius); background: transparent; font-family: var(--font-label); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; }
+.segmented button.active { background: var(--black); color: var(--white); }
+
+.control { margin: 12px 0; }
+.control-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-family: var(--font-label); font-size: 11px; line-height: 12px; letter-spacing: 2px; text-transform: uppercase; }
+.control-head strong { font-weight: 700; }
+.control small { display: block; margin-top: 2px; font-size: 12px; line-height: 16px; color: var(--muted); }
+.control input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; margin: 2px 0 0; background: transparent; touch-action: pan-y; }
+.control input[type="range"]::-webkit-slider-runnable-track { height: 5px; border-radius: 2.5px; background: linear-gradient(to right, var(--handle) var(--p, 50%), var(--track) var(--p, 50%)); }
+.control input[type="range"]::-moz-range-track { height: 5px; border-radius: 2.5px; background: linear-gradient(to right, var(--handle) var(--p, 50%), var(--track) var(--p, 50%)); }
+.control input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; margin-top: -3px; border: 0; border-radius: 50%; background: var(--black); }
+.control input[type="range"]::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 50%; background: var(--black); }
+
+/* Chip "Aleatorio" (o cualquier conmutador chico junto a la etiqueta). */
+.control-head .chip-toggle { margin-left: auto; margin-right: 4px; }
+.chip-toggle { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px 0 6px; border: 0; border-radius: 11px; background: var(--white); color: var(--black); font-family: var(--font-label); font-size: 11px; line-height: 12px; letter-spacing: 1px; text-transform: uppercase; }
+.chip-toggle .dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px currentColor; }
+.chip-toggle.on { background: var(--black); color: var(--white); }
+.chip-toggle.on .dot { background: var(--white); box-shadow: none; }
+
+/* Interruptor con texto y ayuda. */
+.switch { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; margin: 6px 0; font-family: var(--font-label); font-size: 11px; line-height: 13px; letter-spacing: 2px; text-transform: uppercase; }
+.switch small { display: block; margin-top: 3px; font-family: var(--font-body); font-size: 12px; line-height: 16px; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.switch input { -webkit-appearance: none; appearance: none; flex: 0 0 auto; position: relative; width: 38px; height: 22px; margin: 0; border-radius: 11px; background: #d6d6d6; transition: background .15s; }
+.switch input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--white); transition: transform .15s; }
+.switch input:checked { background: var(--black); }
+.switch input:checked::after { transform: translateX(16px); }
+
+/* Fila rápida: tres columnas iguales (grupo de íconos · grupo · interruptor). */
+.quick-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 2px 0 10px; }
+.quick-group { display: flex; gap: 4px; }
+.qbtn { flex: 1 1 0; min-width: 0; height: 32px; padding: 0; border: 0; border-radius: var(--radius); background: var(--white); color: var(--black); display: grid; place-items: center; }
+.qbtn.on { background: var(--black); color: var(--white); }
+.qbtn:disabled { opacity: .3; cursor: default; }
+.qtoggle { display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 32px; padding: 0 6px 0 10px; border-radius: var(--radius); background: var(--white); font-family: var(--font-label); font-size: 11px; line-height: 12px; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; min-width: 0; }
+.qtoggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qtoggle input { appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 30px; height: 18px; margin: 0; border-radius: 9px; background: #d2d2d2; transition: background .15s; }
+.qtoggle input::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--white); transition: transform .15s; }
+.qtoggle input:checked { background: var(--black); }
+.qtoggle input:checked::after { transform: translateX(12px); }
+
+/* "Avanzado": la capa adulta, plegada por defecto. */
+.advanced { margin-top: 14px; border-top: 1px solid #e2e2e2; }
+.advanced > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; min-height: 44px; font-family: var(--font-label); font-weight: 700; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; }
+.advanced > summary::-webkit-details-marker { display: none; }
+.advanced > summary::after { content: ''; width: 8px; height: 8px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translateY(-3px); transition: transform .15s; }
+.advanced[open] > summary::after { transform: rotate(-135deg) translateY(-2px); }
+
+/* Botones de texto. */
+.wide-btn { width: 100%; min-height: 44px; margin-top: 10px; border: 0; border-radius: var(--radius); background: var(--white); font-family: var(--font-label); font-weight: 700; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }
+.wide-btn.dark { background: var(--black); color: var(--white); }
+.text-link { border: 0; background: none; padding: 10px 0; font-family: var(--font-label); font-weight: 700; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; text-decoration: underline; text-underline-offset: 3px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { min-width: 44px; height: var(--control-h); padding: 0 10px; border: 0; border-radius: var(--radius); background: var(--white); font-family: var(--font-label); font-weight: 700; font-size: 11px; letter-spacing: 1px; }
+.chips button.on { background: var(--black); color: var(--white); }
+
+/* Selector desplegable de la fila (cuadro negro + nombre + flecha que rota). */
+.selector {
+  flex: 1 1 0; min-width: 0; height: var(--control-h); display: flex; align-items: center; gap: 8px; padding: 0 10px 0 0;
+  border: 0; border-radius: var(--radius); background: var(--control); text-align: left; color: var(--black);
+}
+.selector-badge { flex: 0 0 auto; width: 40px; height: var(--control-h); border-radius: var(--radius); background: var(--black); color: var(--white); display: grid; place-items: center; }
+.selector-name { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.selector-name strong { font-weight: 400; font-size: 12px; line-height: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.selector-name small { font-family: var(--font-label); font-size: 11px; line-height: 11px; letter-spacing: 2px; color: var(--muted); }
+.selector-chevron { flex: 0 0 auto; display: grid; place-items: center; transition: transform .15s; }
+.selector.open .selector-chevron { transform: rotate(180deg); }
+
+/* ---------------- Muestras y tarjetas elegibles ---------------- */
+.swatches { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--gap); margin: 4px 0 10px; }
+.swatch { position: relative; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: var(--swatch); display: grid; place-items: center; }
+.swatch.on { box-shadow: 0 0 0 1px var(--white), 0 0 0 2px #1a1c1c; }
+.swatch-light { box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.swatch-light.on { box-shadow: inset 0 0 0 1px rgba(0,0,0,.12), 0 0 0 1px var(--white), 0 0 0 2px #1a1c1c; }
+.swatch-custom { background: var(--swatch, conic-gradient(from 0deg, #ff3b30, #ffcc00, #34c759, #00c7be, #007aff, #af52de, #ff2d55, #ff3b30)); overflow: hidden; }
+.swatch-custom input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+
+/* Tarjeta blanca elegible: la elegida lleva un borde interior negro de 2 px. */
+.pick-card { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 0; border-radius: var(--radius); background: var(--white); text-align: left; }
+.pick-card strong { font-family: var(--font-label); font-weight: 700; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }
+.pick-card small { font-size: 12px; line-height: 16px; color: var(--muted); }
+.pick-card.on { box-shadow: inset 0 0 0 2px var(--black); }
+.pick-list { display: grid; gap: 6px; }
+.pick-tray { display: flex; gap: var(--gap); overflow-x: auto; padding-bottom: 4px; touch-action: pan-x; }
+.pick-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px 6px; }
+
+/* ---------------- Ayudas de primera vez y hojas superpuestas ---------------- */
+.coach-mark { position: absolute; z-index: 12; left: 10px; right: 10px; bottom: 10px; padding: 14px 16px 12px; border-radius: var(--radius); background: var(--black); color: var(--white); animation: coach-in .28s cubic-bezier(.2,.8,.2,1); }
+.coach-mark strong { display: block; margin-bottom: 4px; font-size: 15px; line-height: 20px; font-weight: 600; }
+.coach-mark p { margin: 0 0 10px; font-size: 13px; line-height: 18px; color: #dcdcdc; }
+.coach-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.coach-actions button { min-height: 36px; padding: 0 14px; border: 0; border-radius: var(--radius); background: var(--white); color: var(--black); font-family: var(--font-label); font-weight: 700; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }
+@keyframes coach-in { from { opacity: 0; transform: translateY(8px); } }
+
+.overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; background: rgba(0,0,0,.28); }
+.overlay-sheet {
+  width: 100%; max-width: 560px; max-height: 80vh; max-height: 80dvh; overflow-y: auto; overscroll-behavior: contain;
+  padding: 14px var(--gutter) calc(22px + env(safe-area-inset-bottom)); background: var(--sheet); border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  font-size: var(--text-size); line-height: var(--text-line);
+}
+.toast { position: fixed; left: 12px; bottom: 12px; z-index: 100; max-width: 480px; border-radius: var(--radius); background: var(--black); color: var(--white); padding: 8px 12px; font-size: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01s !important; transition-duration: .01s !important; }
+}
+
+/* ---------------- Pantallas anchas: lienzo a la izquierda, herramientas a la derecha ---------------- */
+@media (min-width: 900px) {
+  :root { --gutter: 24px; }
+  .hdr { padding-top: 16px; }
+  .brand { font-size: 13px; line-height: 15px; }
+  .mode { flex-direction: row; gap: 20px; padding: 14px var(--gutter) var(--gutter); }
+  .mode-main { flex: 1 1 auto; padding: 0; }
+  .mode-side { flex: 0 0 400px; min-height: 0; padding-top: 0; }
+  .toolrow { padding: 0; }
+  .sheet { flex: 1 1 auto; height: auto; max-height: none; min-height: 0; border-radius: var(--radius-sheet); }
+  .sheet-handle { visibility: hidden; }
+  .overlay { align-items: center; }
+  .overlay-sheet { border-radius: var(--radius-sheet); }
+}

@@ -1,0 +1,121 @@
+/* TALLER DE GRABADO — pieces the kit doesn't have, built with the kit's tokens
+   (02-fundamentos.md). Imported after tokens.css and base.css. */
+
+/* ---------------- Canvas card ----------------
+   The sheet itself (paper or transparency checkerboard, shadow) is drawn by the
+   renderer (src/render/Renderer.ts). */
+.card-btn:disabled { opacity: .3; cursor: default; }
+
+/* Empty state: the invitation lives on the sheet itself. */
+.empty { display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 290px; padding: 24px; text-align: center; }
+.empty-title { font-family: var(--font-body); font-weight: 600; font-size: 20px; line-height: 24px; }
+.empty-body { margin: 0; font-size: var(--text-size); line-height: var(--text-line); color: var(--placeholder); }
+.empty .empty-btn { width: auto; margin-top: 6px; padding: 0 24px; }
+.empty-hint { margin: 0; font-size: var(--body-size); line-height: var(--body-line); color: var(--muted); }
+.empty.compact { gap: 8px; padding: 14px; }
+.empty.compact .empty-title { font-size: 15px; line-height: 20px; }
+
+/* ---------------- Panels ---------------- */
+.panel-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; transition: opacity .12s; }
+.panel-fieldset.off { opacity: .3; }
+.selector:disabled { opacity: .3; cursor: default; }
+
+/* Ink chips: which ink the colour swatches apply to. */
+.ink-chips { margin: 2px 0 6px; }
+.ink-chips button { display: inline-flex; align-items: center; gap: 7px; padding: 0 12px 0 9px; }
+.ink-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--swatch); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.ink-chips button.on .ink-dot { box-shadow: 0 0 0 1.5px var(--white); }
+
+/* Technique cards in a horizontal tray. */
+.technique-card { flex: 0 0 132px; min-height: 118px; justify-content: flex-start; }
+.technique-card strong { line-height: 14px; }
+.technique-thumb { width: 40px; height: 40px; margin-bottom: 6px; border-radius: var(--radius); background: var(--black); color: var(--white); display: grid; place-items: center; }
+
+/* ---------------- Overlay sheets ---------------- */
+.overlay-title { margin: 4px 0 12px; font-family: var(--font-body); font-weight: 600; font-size: 20px; line-height: 24px; }
+.guide-steps { margin: 0 0 8px; padding-left: 20px; }
+.guide-steps li { margin: 6px 0; }
+.diag-list { margin: 0 0 8px; padding: 0; list-style: none; }
+.diag-list li { display: flex; gap: 12px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid #e2e2e2; }
+.diag-state { flex: 0 0 26px; font-weight: 700; }
+.diag-list small { display: block; font-size: var(--body-size); line-height: var(--body-line); color: var(--muted); word-break: break-word; }
+
+/* ---------------- Narrow phones (< 380 px) ----------------
+   "TALLER DE / GRABADO" is longer than the kit's brand: below 380 px the header
+   buttons give up a few pixels (their touch area still grows with ::before). */
+@media (max-width: 379px) {
+  .hdr { gap: 6px; }
+  .hdr .pill .ibtn { width: 35px; }
+  .hdr > .ibtn.solo { width: 34px; }
+  .brand { letter-spacing: 1.5px; }
+}
+
+/* Wide screens: a horizontal tray (technique cards) must scroll inside the
+   400 px column instead of widening it — flex items default to min-width: auto. */
+@media (min-width: 900px) {
+  .mode-main, .mode-side { min-width: 0; }
+}
+
+/* ---------------- Canvas ---------------- */
+.view-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.card { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+/* The empty-state invitation sits exactly on the sheet the renderer draws. */
+.empty-wrap { position: absolute; z-index: 4; display: grid; place-items: center; pointer-events: none; }
+.empty-wrap .empty > * { pointer-events: auto; }
+.empty .text-link { padding: 6px 0; }
+/* Dragging a file over the app: the card takes the accent (05-interaccion.md). */
+.card.drop-target { box-shadow: inset 0 0 0 2px var(--accent); }
+.drop-hint {
+  position: absolute; z-index: 20; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 8px 12px;
+  border-radius: var(--radius); background: var(--black); color: var(--white); font-weight: 700; letter-spacing: 1.5px; pointer-events: none;
+}
+
+/* ---------------- Layer list ---------------- */
+.layer-row { flex-direction: row; align-items: center; gap: 12px; padding: 8px 12px 8px 8px; }
+.layer-thumb {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: 3px; overflow: hidden; display: grid; place-items: center;
+  background: conic-gradient(var(--control) 25%, var(--white) 0 50%, var(--control) 0 75%, var(--white) 0) 0 0 / 8px 8px;
+}
+.layer-thumb img { max-width: 100%; max-height: 100%; display: block; }
+.layer-text { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.layer-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------------- Selection on the canvas (accent: 01-principios.md §4) ---------------- */
+.selection { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5; overflow: visible; pointer-events: none; }
+.sel-outline { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.sel-ghost { fill: none; stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 4; opacity: .6; }
+.sel-handle { pointer-events: all; cursor: grab; touch-action: none; }
+.sel-handle:active { cursor: grabbing; }
+.sel-hit { fill: transparent; }
+.sel-corner, .sel-knob { fill: var(--white); stroke: var(--accent); stroke-width: 1.5; }
+.sel-crop { stroke: var(--accent); stroke-width: 5; stroke-linecap: round; }
+.float-bar .ibtn { width: 40px; }
+
+/* ---------------- Layer rows ---------------- */
+.layer-row { padding: 0 4px 0 0; }
+.layer-pick { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 8px; border: 0; background: none; text-align: left; border-radius: var(--radius); }
+.layer-row.hidden-layer .layer-thumb, .layer-row.hidden-layer .layer-text { opacity: .3; }
+.layer-text small { display: flex; align-items: center; gap: 5px; }
+.ink-dot.inline { width: 9px; height: 9px; }
+.layer-lock { margin-left: auto; display: grid; place-items: center; }
+
+/* ---------------- Paper swatches (pick-grid, 11:15 tiles with the name below) ---------------- */
+.paper-card { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0; border: 0; background: none; min-width: 0; }
+.paper-tile {
+  width: 100%; aspect-ratio: 11 / 15; border-radius: var(--radius); background: var(--paper);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+}
+.paper-card.on .paper-tile { box-shadow: inset 0 0 0 2px var(--black); }
+.paper-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--body-size); line-height: var(--body-line); }
+.card-btn.left.on { background: var(--black); color: var(--white); }
+
+/* ---------------- Export ---------------- */
+.export-summary { font-variant-numeric: tabular-nums; }
+.export-progress { display: flex; align-items: center; gap: 12px; min-height: 44px; margin-top: 10px; }
+.export-progress .text-link { margin-left: auto; }
+/* The kit's loading ring (accent): fills clockwise with the progress. */
+.ring {
+  flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%;
+  background: conic-gradient(var(--accent) var(--p, 0%), #e2e2e2 0);
+  -webkit-mask: radial-gradient(circle, transparent 7px, #000 8px); mask: radial-gradient(circle, transparent 7px, #000 8px);
+}
