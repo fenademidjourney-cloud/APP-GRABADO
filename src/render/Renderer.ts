@@ -24,7 +24,8 @@ import { PngStreamWriter } from '../io/export/pngStream'
 import { zip } from '../io/export/zip'
 import { voidAndCluster } from '../analysis/bluenoise'
 import { createProgram, parseHex, type GL, type Program } from './gl/gl'
-import { BLUR_FS, COMPOSITE_FS, LAYER_FS, LAYER_VS, QUAD_VS, SHADOW_FS, TONE_FS } from './shaders'
+import { BLUR_FS, COMPOSITE_FS, LAYER_FS, LAYER_VS, LINE_FS, LINE_VS, QUAD_VS, SHADOW_FS, TONE_FS } from './shaders'
+import { buildLines, LINE_STRIDE, type ToneField } from '../engines/line/flow'
 import { maxDisplacementMm } from '../print/registration'
 import { pieceIds } from '../analysis/components'
 import { SURFACE_INDEX } from '../engines/relief/params'
@@ -55,7 +56,9 @@ interface Texture { tex: WebGLTexture; w: number; h: number }
 interface Target { fb: WebGLFramebuffer; tex: WebGLTexture }
 /** Two colour attachments drawn at once (inks 1–4 and 5–6). */
 interface Pair { fb: WebGLFramebuffer; tex: [WebGLTexture, WebGLTexture] }
-type Targets = Record<'all' | 'auto' | 'plates0' | 'plates1', Target> & { tone: Pair }
+type Targets = Record<'all' | 'auto' | 'plates0' | 'plates1' | 'lines', Target> & { tone: Pair }
+/** Line strokes uploaded to the GPU (engines/line/flow.ts). */
+interface LineGpu { key: string; buf: WebGLBuffer; vertices: number; spacing: number }
 /** The whole sheet at analysis resolution: its layers, tone, and the blurred mass. */
 interface Analysis { w: number; h: number; k: number; layers: Targets; blur: Pair; mass: Pair; smooth: Pair; simplify: boolean; pieces: WebGLTexture }
 interface AssetSource { blob: Blob; natural: { w: number; h: number } }
@@ -74,6 +77,9 @@ export class Renderer {
   private compositeProg!: Program
   private toneProg!: Program
   private blurProg!: Program
+  private lineProg!: Program
+  private lineGpu: LineGpu | null = null
+  private frameLinesKey = ''
   private unitQuad!: WebGLBuffer
   private layerBuf!: WebGLBuffer
   private blueNoise!: WebGLTexture
@@ -100,6 +106,7 @@ export class Renderer {
       this.textures.clear()
       this.targets = null
       this.analysis = null
+      this.lineGpu = null
       this.emit({ type: 'error', code: 'context-lost' })
     })
     c.addEventListener('webglcontextrestored', () => {
@@ -107,6 +114,7 @@ export class Renderer {
       this.setup()
       this.layersKey = ''
       this.toneKey = ''
+      this.frameLinesKey = ''
       this.analysisKey = ''
       for (const id of this.sources.keys()) this.decode(id)
       this.requestFrame()
@@ -126,6 +134,8 @@ export class Renderer {
     this.compositeProg = createProgram(gl, QUAD_VS, COMPOSITE_FS)
     this.toneProg = createProgram(gl, QUAD_VS, TONE_FS)
     this.blurProg = createProgram(gl, QUAD_VS, BLUR_FS)
+    this.lineProg = createProgram(gl, LINE_VS, LINE_FS)
+    this.lineGpu = null
     this.unitQuad = gl.createBuffer()!
     gl.bindBuffer(gl.ARRAY_BUFFER, this.unitQuad)
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), gl.STATIC_DRAW)
@@ -231,7 +241,12 @@ export class Renderer {
   }
 
   private makeTargets(w: number, h: number): Targets {
-    return { all: this.makeTarget(w, h), auto: this.makeTarget(w, h), plates0: this.makeTarget(w, h), plates1: this.makeTarget(w, h), tone: this.makePair(w, h) }
+    const lines = this.makeTarget(w, h)
+    // Lines are read between pixels (registration): linear.
+    this.gl.bindTexture(this.gl.TEXTURE_2D, lines.tex)
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR)
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR)
+    return { all: this.makeTarget(w, h), auto: this.makeTarget(w, h), plates0: this.makeTarget(w, h), plates1: this.makeTarget(w, h), lines, tone: this.makePair(w, h) }
   }
 
   private deleteTargets(t: Targets | Array<Target | Pair>) {
@@ -429,12 +444,7 @@ export class Renderer {
     const rel = scene.print.relief
     if (rel && rel.pieces > 0) {
       const gl = this.gl
-      const src = a.simplify ? a.smooth : a.layers.tone
-      const px = new Uint8Array(w * h * 4)
-      gl.bindFramebuffer(gl.FRAMEBUFFER, src.fb)
-      gl.readBuffer(gl.COLOR_ATTACHMENT0)
-      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px)
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      const px = this.readPair(a.simplify ? a.smooth : a.layers.tone, w, h)
       const cut = rel.threshold * 255
       const inked = new Uint8Array(w * h)
       for (let i = 0; i < w * h; i++) inked[i] = Math.max(px[i * 4], px[i * 4 + 1], px[i * 4 + 2], px[i * 4 + 3]) > cut ? 1 : 0
@@ -443,6 +453,81 @@ export class Renderer {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, pieceIds(inked, w, h, 2))
     }
     return a
+  }
+
+  /** Read the first target of a pair (inks 1–4) back to the CPU; rows bottom-up. */
+  private readPair(src: Pair, w: number, h: number): Uint8Array {
+    const gl = this.gl
+    const px = new Uint8Array(w * h * 4)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, src.fb)
+    gl.readBuffer(gl.COLOR_ATTACHMENT0)
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    return px
+  }
+
+  /**
+   * The line geometry for this scene, built on the CPU from the analysis tone and kept
+   * on the GPU until the tone or the line parameters change. The preview and the export
+   * draw the same buffer: lines never move between them.
+   */
+  private ensureLines(scene: Scene, a: Analysis, analysisKey: string): LineGpu | null {
+    const lines = scene.print.lines
+    if (!lines) return null
+    const key = analysisKey + JSON.stringify(lines.build)
+    if (this.lineGpu?.key === key) return this.lineGpu
+    const px = this.readPair(a.layers.tone, a.w, a.h)
+    const inkCount = Math.min(4, scene.print.inks.length)
+    const inks = Array.from({ length: inkCount }, () => new Float32Array(a.w * a.h))
+    for (let y = 0; y < a.h; y++) {
+      const src = (a.h - 1 - y) * a.w   // bottom-up → top-down
+      for (let x = 0; x < a.w; x++) for (let i = 0; i < inkCount; i++) inks[i][y * a.w + x] = px[(src + x) * 4 + i] / 255
+    }
+    const field: ToneField = { w: a.w, h: a.h, k: a.k, inks }
+    const geo = buildLines(field, lines.build)
+    const gl = this.gl
+    if (this.lineGpu) gl.deleteBuffer(this.lineGpu.buf)
+    const buf = gl.createBuffer()!
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf)
+    gl.bufferData(gl.ARRAY_BUFFER, geo.data, gl.STATIC_DRAW)
+    this.lineGpu = { key, buf, vertices: geo.vertices, spacing: lines.build.spacingMm }
+    return this.lineGpu
+  }
+
+  /** Draw the line strokes of one frame into t.lines (one ink per channel). */
+  private linePass(t: Targets, f: Frame, g: LineGpu | null) {
+    const gl = this.gl
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.lines.fb)
+    gl.viewport(0, 0, f.W, f.H)
+    gl.colorMask(true, true, true, true)
+    gl.clearColor(0, 0, 0, 0)
+    gl.clear(gl.COLOR_BUFFER_BIT)
+    if (g && g.vertices > 0) {
+      const lp = this.lineProg
+      gl.useProgram(lp.program)
+      gl.enable(gl.BLEND)
+      gl.blendEquation(gl.FUNC_ADD)
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR)   // 1 − (1 − a)(1 − b), per channel
+      gl.uniform2f(lp.uniform('uCanvas'), f.W, f.H)
+      gl.uniform4f(lp.uniform('uSheet'), f.sx, f.sy, f.sw, f.sh)
+      gl.uniform1f(lp.uniform('uPxPerMm'), f.k)
+      gl.uniform1f(lp.uniform('uSpacing'), g.spacing)
+      gl.bindBuffer(gl.ARRAY_BUFFER, g.buf)
+      const attrs: Array<[string, number, number, boolean]> = [['aPos', 2, 0, false], ['aNormal', 2, 8, false], ['aSide', 1, 16, false], ['aWidth', 4, 20, true]]
+      const locs: number[] = []
+      for (const [name, size, offset, norm] of attrs) {
+        const loc = lp.attrib(name)
+        if (loc < 0) continue
+        locs.push(loc)
+        gl.enableVertexAttribArray(loc)
+        gl.vertexAttribPointer(loc, size, norm ? gl.UNSIGNED_BYTE : gl.FLOAT, norm, LINE_STRIDE, offset)
+      }
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, g.vertices)
+      for (const loc of locs) gl.disableVertexAttribArray(loc)
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+      gl.disable(gl.BLEND)
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
   }
 
   private deleteAnalysis(a: Analysis) {
@@ -491,6 +576,15 @@ export class Renderer {
     gl.uniform1f(cp.uniform('uRelPieces'), rel?.pieces ?? 0)
     gl.uniform1f(cp.uniform('uRelGrow'), rel?.growMm ?? 0)
     gl.uniform1f(cp.uniform('uRelRough'), rel?.roughMm ?? 0)
+    gl.uniform1f(cp.uniform('uRelGouges'), pr.lines && rel ? rel.gouges : 0)
+    gl.uniform1f(cp.uniform('uRelGougeLow'), rel?.gougeLow ?? 0)
+    const ln = pr.lines?.print
+    gl.uniform1i(cp.uniform('uLineWhite'), ln?.white ? 1 : 0)
+    gl.uniform1i(cp.uniform('uIntaglio'), pr.impression.intaglio ? 1 : 0)
+    gl.uniform1f(cp.uniform('uPlateTone'), ln?.plateTone ?? 0)
+    gl.uniform1f(cp.uniform('uPlateMargin'), pr.impression.intaglio ? ln?.plateMarginMm ?? 0 : 0)
+    gl.uniform1f(cp.uniform('uInkRelief'), ln?.inkRelief ?? 0)
+    this.bindTex(cp, 11, 'uLines', t.lines.tex)
     this.bindTex(cp, 10, 'uPieces', a.pieces)
     gl.uniform1f(cp.uniform('uFilmGrain'), st?.filmGrain ?? 0)
     gl.uniform1f(cp.uniform('uGridMm'), st?.gridMm ?? 0)
@@ -528,7 +622,7 @@ export class Renderer {
     gl.uniform2f(cp.uniform('uSheetMm'), sheet.widthMm, sheet.heightMm)
     gl.uniform1f(cp.uniform('uPxPerMm'), f.k)
     const sc = pr.screen
-    gl.uniform1i(cp.uniform('uEngine'), rel ? 3 : st ? 2 : sc ? 1 : 0)
+    gl.uniform1i(cp.uniform('uEngine'), ln ? 4 : rel ? 3 : st ? 2 : sc ? 1 : 0)
     if (sc) {
       gl.uniform1i(cp.uniform('uFM'), sc.fm ? 1 : 0)
       gl.uniform1i(cp.uniform('uShape'), sc.shape)
@@ -546,6 +640,12 @@ export class Renderer {
     // Always bound: samplers of one program must not alias different types on a unit.
     this.bindTex(cp, 4, 'uBlue', this.blueNoise)
     this.quad(cp, f, f.sx, f.sy, f.sw, f.sh)
+  }
+
+  /** Everything the analysis fields depend on. */
+  private analysisKeyOf(scene: Scene): string {
+    const pr = scene.print
+    return JSON.stringify([scene.sheet, scene.layers, pr.inks, pr.contrast, pr.stencil?.simplifyMm ?? 0, pr.relief?.simplifyMm ?? 0, pr.relief?.threshold ?? 0, (pr.relief?.pieces ?? 0) > 0, this.textures.size])
   }
 
   /** The on-screen preview. */
@@ -566,6 +666,7 @@ export class Renderer {
       this.targetSize = { w: W, h: H }
       this.layersKey = ''
       this.toneKey = ''
+      this.frameLinesKey = ''
     }
     const texture = (id: string) => this.textures.get(id)
     const key = JSON.stringify([f, inkCount, this.textures.size, scene.layers])
@@ -578,10 +679,20 @@ export class Renderer {
       this.toneKey = toneKey
       this.tonePass(this.targets, f, scene.print)
     }
-    const analysisKey = JSON.stringify([scene.sheet, scene.layers, scene.print.inks, scene.print.contrast, scene.print.stencil?.simplifyMm ?? 0, scene.print.relief?.simplifyMm ?? 0, scene.print.relief?.threshold ?? 0, (scene.print.relief?.pieces ?? 0) > 0, this.textures.size])
+    const analysisKey = this.analysisKeyOf(scene)
     if (!this.analysis || analysisKey !== this.analysisKey) {
       this.analysisKey = analysisKey
       this.analysis = this.runAnalysis(scene, texture, this.analysis)
+    }
+    const before = this.lineGpu
+    const lines = this.ensureLines(scene, this.analysis, analysisKey)
+    // A frame whose callback ran long (the line geometry takes ~1 s) may never be
+    // shown; ask for one more: everything is cached by then, so it is quick.
+    if (lines !== before) this.requestFrame()
+    const linesKey = JSON.stringify([f, lines?.key ?? ''])
+    if (linesKey !== this.frameLinesKey) {
+      this.frameLinesKey = linesKey
+      this.linePass(this.targets, f, lines)
     }
 
     // Card, sheet shadow, then the printed sheet.
@@ -640,7 +751,10 @@ export class Renderer {
     const shiftPx = (maxDisplacementMm(print.registration, scene.sheet) + print.impression.bleedMm) * k
     const A = Math.min(512, (sc && !sc.fm ? Math.ceil(cellPx) : 0) + Math.ceil(shiftPx) + 4)
     const TA = TS + 2 * A
-    const analysis = this.runAnalysis(scene, texture, null)
+    // The analysis comes from the preview's own textures, so its fields — and the line
+    // geometry built on them — are exactly the preview's.
+    const analysis = this.runAnalysis(scene, (id) => this.textures.get(id), null)
+    const lineGpu = this.ensureLines(scene, analysis, this.analysisKeyOf(scene))
     const targets = this.makeTargets(TA, TA)
     const out = this.makeTarget(TA, TA)
     const tile = new Uint8Array(TS * TS * 4)
@@ -666,6 +780,7 @@ export class Renderer {
             const f: Frame = { W: TA, H: TA, sx: A - x0, sy: A - y0, sw: W, sh: H, k }
             this.layerPasses(targets, f, scene.layers, inkCount, texture)
             this.tonePass(targets, f, print)
+            this.linePass(targets, f, lineGpu)
             gl.bindFramebuffer(gl.FRAMEBUFFER, out.fb)
             gl.viewport(0, 0, TA, TA)
             gl.clearColor(1, 1, 1, sepInk >= 0 ? 1 : 0)
@@ -721,6 +836,14 @@ export function frameScheduler(draw: () => void): () => void {
   return () => {
     if (queued) return
     queued = true
-    raf(() => { queued = false; draw() })
+    const run = () => {
+      if (!queued) return
+      queued = false
+      draw()
+    }
+    raf(run)
+    // In a worker, after a long frame (the line geometry), requestAnimationFrame can stall
+    // until something else changes; a timer makes sure the frame still comes.
+    setTimeout(run, 50)
   }
 }

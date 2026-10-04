@@ -88,6 +88,46 @@ void main() {
   else outColor = c;
 }`
 
+// Line engine strokes (engines/line/flow.ts): triangle strips around centrelines in
+// mm, widths per ink as a fraction of the spacing. Every channel of the target is
+// one ink's line coverage; overlapping strokes combine as 1 − (1 − a)(1 − b).
+export const LINE_VS = `#version 300 es
+in vec2 aPos;       // centreline point, mm
+in vec2 aNormal;
+in float aSide;     // −1 / +1
+in vec4 aWidth;     // per ink, fraction of the spacing (0..1)
+uniform vec2 uCanvas;
+uniform vec4 uSheet;       // sheet origin (px) and size
+uniform float uPxPerMm;
+uniform float uSpacing;    // mm
+out float vDist;           // mm across the stroke
+out vec4 vHalf;            // half widths, mm
+void main() {
+  vec4 hw = aWidth * uSpacing * 0.5;
+  float ext = max(max(hw.x, hw.y), max(hw.z, hw.w)) + 1.5 / uPxPerMm;
+  vec2 mm = aPos + aNormal * aSide * ext;
+  vDist = aSide * ext;
+  vHalf = hw;
+  vec2 px = uSheet.xy + mm * uPxPerMm;
+  vec2 c = px / uCanvas * 2.0 - 1.0;
+  gl_Position = vec4(c.x, -c.y, 0.0, 1.0);
+}`
+
+export const LINE_FS = `#version 300 es
+precision highp float;
+in float vDist;
+in vec4 vHalf;
+uniform float uPxPerMm;
+out vec4 outColor;
+void main() {
+  float d = abs(vDist) * uPxPerMm;
+  vec4 h = vHalf * uPxPerMm;
+  // Strokes thinner than a pixel are drawn a pixel wide, lighter, so their tone holds.
+  vec4 eff = max(h, vec4(0.5));
+  vec4 keep = min(h / 0.5, vec4(1.0));
+  outColor = clamp(eff - d + 0.5, 0.0, 1.0) * keep;
+}`
+
 const COMMON = `
 vec3 toLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
 vec3 toSrgb(vec3 c) { c = max(c, 0.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
@@ -273,7 +313,16 @@ uniform float uRelPieces;
 uniform float uRelGrow;       // mm
 uniform float uRelRough;      // mm
 uniform sampler2D uPieces;    // analysis/components.ts: piece id (rgb) per analysis pixel
-// Technique engine (docs/PLANNING.md §C.2). 0 = continuous ink, 1 = screen, 2 = stencil, 3 = relief.
+uniform float uRelGouges;     // 0..1: white gouge cuts in the mid tones (woodcut v2)
+uniform float uRelGougeLow;   // tone below which the block is cut away
+// Line engine (engines/line/params.ts) and the intaglio impression.
+uniform sampler2D uLines;     // per ink (rgba) stroke coverage, drawn for this frame
+uniform bool uLineWhite;
+uniform bool uIntaglio;
+uniform float uPlateTone;     // 0..1
+uniform float uPlateMargin;   // mm (0 = no plate mark)
+uniform float uInkRelief;     // 0..1
+// Technique engine (docs/PLANNING.md §C.2). 0 = continuous ink, 1 = screen, 2 = stencil, 3 = relief, 4 = line.
 uniform int uEngine;
 uniform bool uFM;             // stochastic screen instead of AM dots
 uniform int uShape;           // engines/screen/spot.ts · SHAPE_INDEX
@@ -542,6 +591,11 @@ vec2 woodGrain(vec2 pm) {
   return vec2(late + 0.25 * early, fibres);
 }
 
+float linesAt(int k, vec2 pm) {
+  vec4 c = texture(uLines, uvOfMm(pm));
+  return k < 4 ? c[k] : 0.0;
+}
+
 float reliefTone(int k, vec2 pm) { return uSimplify ? smoothToneAt(k, pm) : toneAt(k, uvOfMm(pm)); }
 
 // Relief matrix of ink k (docs/PLANNING.md §C.1): x = area covered, y = film, z = film for separations.
@@ -557,7 +611,9 @@ vec3 reliefPlate(int k, vec2 pm, float growMm) {
   vec2 grad = vec2(reliefTone(k, pq + vec2(e, 0.0)) - reliefTone(k, pq - vec2(e, 0.0)),
                    reliefTone(k, pq + vec2(0.0, e)) - reliefTone(k, pq - vec2(0.0, e))) / (2.0 * e);
   float slope = max(length(grad), 1e-4);
-  float phi = (uRelThreshold - T) / slope;
+  // With gouges the block keeps the mid tones and the cuts carry them (woodcut v2).
+  float cut = uRelGouges > 0.0 ? uRelGougeLow : uRelThreshold;
+  float phi = (cut - T) / slope;
   phi = clamp(phi, -50.0, 50.0);
   phi -= uRelGrow + growMm;
   phi += (vnoise(rot(0.5) * pm / 0.09, sScreen ^ 311u) - 0.5) * uRelRough * 2.0;
@@ -571,6 +627,7 @@ vec3 reliefPlate(int k, vec2 pm, float growMm) {
   // (The noise lattice is turned so its cells don't line up with the letters' stems.)
   if (piece.w > 0.0 && piece.z < 0.3 * uRelPieces) phi += (vnoise(rot(0.7) * pm / 0.45, sScreen ^ 314u) * 0.6 + vnoise(rot(-0.4) * pm / 0.15, sScreen ^ 315u) * 0.4) * 0.3;
   float cov = clamp(0.5 - phi * uPxPerMm, 0.0, 1.0);
+  if (uRelGouges > 0.0) cov *= 1.0 - linesAt(k, pm);
 
   float film = 1.0;
   // Squash: the ink is pushed to the edge of each mark — darker rim, lighter middle.
@@ -594,6 +651,14 @@ vec3 reliefPlate(int k, vec2 pm, float growMm) {
   return vec3(cov, max(film, 0.0), cov);
 }
 
+// Intaglio: the plate covers the sheet minus a margin; its bevelled edge is pressed
+// into the damp paper (the plate mark). 1 inside, 0 outside, smooth over the bevel.
+float insidePlate(vec2 mm) {
+  if (uPlateMargin <= 0.0) return 1.0;
+  vec2 d = min(mm - uPlateMargin, uSheetMm - uPlateMargin - mm);
+  return smoothstep(-0.4, 0.4, min(d.x, d.y));
+}
+
 // The plate pressed into the paper (deboss), as a height 0..1 from the low-resolution tone.
 float debossAt(vec2 mm) {
   float t = 0.0;
@@ -615,6 +680,11 @@ float filmFor(int k, float t) {
 // growMm widens the marks (bleed).
 vec3 plate(int k, vec2 pm, float growMm) {
   if (uEngine == 3) return reliefPlate(k, pm, growMm);
+  if (uEngine == 4) {
+    float c = linesAt(k, pm);
+    if (uLineWhite) c = 1.0 - c;
+    return vec3(c, 1.0, c);
+  }
   bool stencil = uEngine == 2;
   bool screened = uEngine == 1 || (stencil && uFill > 0);
   vec2 pq = onGrid(pm);
@@ -773,6 +843,14 @@ void main() {
       // averages in reflected light. A transparent ink filters what is under it
       // (Beer–Lambert: overlapping inks multiply); an opaque one covers it with its
       // own colour, in the order of the passes.
+      if (uIntaglio && uPlateTone > 0.0 && insidePlate(mm) > 0.0) {
+        // Plate tone: the film of ink the wiping leaves on the polished plate, with
+        // streaks in the direction of the last wipe.
+        float wipe = vnoise(rot(0.35) * pm * vec2(0.08, 1.4), sImpression ^ (121u + uint(k))) * 0.6
+                   + vnoise(pm / 25.0, sImpression ^ (122u + uint(k))) * 0.4;
+        float toneFilm = uPlateTone * 0.07 * (0.4 + wipe) * insidePlate(mm);
+        col *= exp(-uInkA[k] * toneFilm * (1.0 - cov));
+      }
       // An opaque ink covers in proportion to the film it lays (a light tint covers less).
       vec3 film = exp(-uInkA[k] * max(dens, 0.0));
       col = mix(col, mix(col * film, film, uOpacity[k] * clamp(m.y, 0.0, 1.0)), cov);
@@ -793,6 +871,21 @@ void main() {
       vec2 slope = vec2(hx, hy) / e * uRelief * 0.06;
       // Light from the top left: a surface rising towards +x/+y faces it.
       col *= 1.0 + uLight * 1.6 * dot(slope, vec2(0.7, 0.7));
+    }
+    if (uIntaglio && uColorOn && !uCompare) {
+      float e = max(aaMm, 0.15);
+      // Plate mark: the paper inside is lower; the bevel catches or loses the light.
+      if (uPlateMargin > 0.0) {
+        float p0 = insidePlate(mm);
+        vec2 g = vec2(insidePlate(mm + vec2(e, 0.0)) - p0, insidePlate(mm + vec2(0.0, e)) - p0) / e;
+        col *= 1.0 - (0.3 + uLight) * 0.12 * dot(g, vec2(0.7, 0.7)) + 0.015 * p0;
+      }
+      // Ink in relief: intaglio lines stand on the paper and catch the light on one side.
+      if (uInkRelief > 0.0 && uEngine == 4) {
+        float l0 = linesAt(0, mm);
+        vec2 g = vec2(linesAt(0, mm + vec2(e, 0.0)) - l0, linesAt(0, mm + vec2(0.0, e)) - l0) / e;
+        col *= 1.0 + uInkRelief * 0.04 * dot(g, vec2(0.7, 0.7)) * (uLineWhite ? -1.0 : 1.0);
+      }
     }
     // Deboss: the plate pushed the paper down; its walls catch or lose the light.
     if (uEngine == 3 && uRelDeboss > 0.0 && uColorOn && !uCompare) {

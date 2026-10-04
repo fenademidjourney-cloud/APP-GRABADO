@@ -8,6 +8,8 @@ import type { ScreenUniforms } from '../engines/screen/params'
 import type { InkRegistration } from '../print/registration'
 import type { StencilUniforms } from '../engines/stencil/params'
 import type { ReliefUniforms } from '../engines/relief/params'
+import type { LineUniforms } from '../engines/line/params'
+import type { LineBuild } from '../engines/line/flow'
 
 export interface SceneColors {
   card: string      // the canvas card (token --card)
@@ -29,7 +31,7 @@ export interface PrintScene {
   /** Per ink, in print order; all zero with Registro off. */
   registration: InkRegistration[]
   /** Impression model; `on` false ("Textura de tinta" off) = ideal print. contact and depletion: print/impression.ts. */
-  impression: { on: boolean; pressure: number; grain: number; bleedMm: number; contact: number; depletion: number; bandsAcross: boolean }
+  impression: { on: boolean; pressure: number; grain: number; bleedMm: number; contact: number; depletion: number; bandsAcross: boolean; intaglio: boolean }
   /** amount 0..1 (0 with Imperfecciones off) and print/imperfections.ts · IMPERFECTION_BIT mask. */
   imperfections: { amount: number; mask: number }
   paper: { color: string; fibre: number; flocs: number; texture: number; relief: number; light: number }
@@ -37,6 +39,8 @@ export interface PrintScene {
   screen?: ScreenUniforms
   stencil?: StencilUniforms
   relief?: ReliefUniforms
+  /** Line geometry (built once on the CPU) and, for the line engine, how it prints. Relief uses it for gouges. */
+  lines?: { build: LineBuild; print?: LineUniforms }
 }
 
 export interface Scene {

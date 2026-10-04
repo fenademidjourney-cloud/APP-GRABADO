@@ -38,6 +38,7 @@ export const RELIEF_PARAMS: ParamDef[] = [
   },
   { id: 'squash', type: 'number', labelKey: 'relief.squash', hintKey: 'relief.squashHint', min: 0, max: 100, step: 1, default: 15, display: pct },
   { id: 'deboss', type: 'number', labelKey: 'relief.deboss', hintKey: 'relief.debossHint', min: 0, max: 100, step: 1, default: 15, display: pct },
+  { id: 'gouges', type: 'number', labelKey: 'relief.gouges', hintKey: 'relief.gougesHint', min: 0, max: 100, step: 1, default: 0, display: pct },
   { id: 'pieces', type: 'number', labelKey: 'relief.pieces', hintKey: 'relief.piecesHint', min: 0, max: 100, step: 1, default: 0, display: pct },
 ]
 
@@ -53,6 +54,8 @@ export interface ReliefUniforms {
   squash: number         // 0..1
   deboss: number         // 0..1
   pieces: number         // 0..1
+  gouges: number         // 0..1: white cuts carry the mid tones (woodcut v2)
+  gougeLow: number       // tone below which the block is cleared
   simplifyMm: number     // σ of the smoothing: the smallest detail the knife keeps
   growMm: number         // over-inking (+) closes counters, under-inking (−) thins marks
   roughMm: number        // ragged edges
@@ -77,6 +80,9 @@ export function resolveRelief(p: Params, u: { detail: number; pressure: number; 
     squash: Number(p.squash) / 100,
     deboss: Number(p.deboss) / 100,
     pieces: Number(p.pieces) / 100,
+    gouges: Number(p.gouges) / 100,
+    // The more gouging, the deeper into the lights the block is kept (and cut).
+    gougeLow: (Number(p.threshold) / 100) * (1 - 0.8 * (Number(p.gouges) / 100)),
     simplifyMm: (1 - u.detail / 100) * MAX_RELIEF_SIMPLIFY_MM,
     growMm,
     roughMm: (u.roughness / 100) * 0.12,

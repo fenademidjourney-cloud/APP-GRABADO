@@ -20,6 +20,8 @@ import { newSeed } from '../util/seed'
 import { resolveScreen } from '../engines/screen/params'
 import { resolveStencil } from '../engines/stencil/params'
 import { resolveRelief } from '../engines/relief/params'
+import { resolveLine } from '../engines/line/params'
+import type { PrintScene as PS } from '../render/scene'
 import type { ParamValue } from '../engines/types'
 import type { PrintScene } from '../render/scene'
 import { duplicateLayer, reorder, updateLayer } from '../model/layerOps'
@@ -178,6 +180,20 @@ export default function App() {
     const model = IMPRESSION[modelId]
     const engine = doc.toggles.technique ? engineOf(doc.technique) : 'none'
     const stencil = engine === 'stencil' ? resolveStencil(doc.params, u, doc.inks.length, modelId === 'screenprint' ? 'mesh' : 'master') : null
+    const relief = engine === 'relief' ? resolveRelief(doc.params, u) : undefined
+    let lines: PS['lines']
+    if (engine === 'line') {
+      lines = resolveLine(doc.params, u, doc.seed)
+    } else if (relief && relief.gouges > 0) {
+      // Woodcut v2: gouge cuts, white, following the forms, entering and leaving tapered.
+      lines = {
+        build: {
+          spacingMm: 1.1, angleDeg: Number(doc.params.grainAngle) || 0, follow: 0.8, layers: 1, swell: 1, taper: 0.9,
+          tremorMm: (u.roughness / 100) * 0.06, detail: u.detail / 100, mode: 'gouge',
+          gougeLow: relief.gougeLow, gougeHigh: relief.threshold, seed: doc.seed,
+        },
+      }
+    }
     return {
       inks: doc.inks,
       inkOpacity: doc.inkOpacity.map((o) => o / 100),
@@ -197,6 +213,7 @@ export default function App() {
         contact: model.contact * (engine === 'relief' ? 1 - 0.8 * (Number(doc.params.deboss) || 0) / 100 : 1),
         depletion: model.depletion,
         bandsAcross: model.bandsAcross,
+        intaglio: modelId === 'intaglio',
       },
       imperfections: {
         amount: doc.toggles.imperfections ? doc.imperfections.amount / 100 : 0,
@@ -205,7 +222,8 @@ export default function App() {
       paper: { color: paper.color, fibre: paper.fibre, flocs: paper.flocs, texture: doc.paper.texture / 100, relief: paper.relief, light: doc.paper.light / 100 },
       screen: engine === 'screen' ? resolveScreen(doc.params, u, doc.inks.length) : stencil?.screen,
       stencil: stencil?.stencil,
-      relief: engine === 'relief' ? resolveRelief(doc.params, u) : undefined,
+      relief,
+      lines,
     }
   }, [doc.inks, doc.universal, doc.toggles, doc.paper, doc.technique, doc.params, doc.seed, doc.imperfections])
   const [screenLod, setScreenLod] = useState(false)

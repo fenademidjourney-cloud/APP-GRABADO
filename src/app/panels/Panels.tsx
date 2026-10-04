@@ -82,7 +82,7 @@ export function EffectPanel({ hasImage, technique, techniqueOn, inkCount, univer
           min={u.min}
           max={u.max}
           gesture={gesture}
-          hint={t(id === 'detail' && engine === 'stencil' ? 'effect.detailHintStencil' : id === 'detail' && engine === 'relief' ? 'effect.detailHintRelief' : u.hint)}
+          hint={t(id === 'detail' && engine === 'stencil' ? 'effect.detailHintStencil' : id === 'detail' && engine === 'relief' ? 'effect.detailHintRelief' : id === 'detail' && engine === 'line' ? 'effect.detailHintLine' : u.hint)}
           onChange={(n) => onUniversal(id as UniversalKey, n)}
         />,
       )
