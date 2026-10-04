@@ -291,12 +291,29 @@ export function SheetSizes({ sheetId, onSheet }: { sheetId: string; onSheet: (id
   )
 }
 
-export function PrintAdvancedPanel({ doc, onToggle, onSheet, onSeed, onNewSeed }: {
+export interface ProjectActions { onSave: () => void; onOpen: () => void; canSave: boolean }
+
+/** Guardar / Abrir proyecto: a .imprenta file with the images and every setting. */
+function ProjectSection({ project }: { project: ProjectActions }) {
+  return (
+    <>
+      <Label>{t('project.title')}</Label>
+      <div className="chips" role="group" aria-label={t('project.title')}>
+        <button type="button" aria-label={t('project.saveLabel')} disabled={!project.canSave} onClick={project.onSave}>{t('project.save')}</button>
+        <button type="button" aria-label={t('project.openLabel')} onClick={project.onOpen}>{t('project.open')}</button>
+      </div>
+      <p className="sheet-note">{t('project.note')}</p>
+    </>
+  )
+}
+
+export function PrintAdvancedPanel({ doc, onToggle, onSheet, onSeed, onNewSeed, project }: {
   doc: Doc
   onToggle: (k: keyof CleanToggles, on: boolean) => void
   onSheet: (id: string) => void
   onSeed: (s: number) => void
   onNewSeed: () => void
+  project: ProjectActions
 }) {
   const sw = (k: keyof CleanToggles, key: TextKey, hint: TextKey) => <Switch key={k} label={t(key)} hint={t(hint)} checked={doc.toggles[k]} onChange={(on) => onToggle(k, on)} />
   return (
@@ -310,6 +327,7 @@ export function PrintAdvancedPanel({ doc, onToggle, onSheet, onSeed, onNewSeed }
       {sw('color', 'advanced.color', 'advanced.colorHint')}
       {sw('registration', 'advanced.registration', 'advanced.registrationHint')}
       <SeedControl seed={doc.seed} onSeed={onSeed} onNewSeed={onNewSeed} />
+      <ProjectSection project={project} />
       <Advanced>
         <Label>{t('advanced.sheet')}</Label>
         <SheetSizes sheetId={doc.sheetId} onSheet={onSheet} />
@@ -318,11 +336,12 @@ export function PrintAdvancedPanel({ doc, onToggle, onSheet, onSeed, onNewSeed }
   )
 }
 
-export function ComposeAdvancedPanel({ sheetId, onSheet }: { sheetId: string; onSheet: (id: string) => void }) {
+export function ComposeAdvancedPanel({ sheetId, onSheet, project }: { sheetId: string; onSheet: (id: string) => void; project: ProjectActions }) {
   return (
     <div className="panel-body">
       <Label>{t('advanced.sheet')}</Label>
       <SheetSizes sheetId={sheetId} onSheet={onSheet} />
+      <ProjectSection project={project} />
     </div>
   )
 }

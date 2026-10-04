@@ -28,7 +28,9 @@ import type { PrintScene } from '../render/scene'
 import { duplicateLayer, reorder, updateLayer } from '../model/layerOps'
 import { ImportError, importBlob, type ImportErrorCode, type ImportedAsset } from '../io/import/decode'
 import { clipboardButtonAvailable, fetchImageUrl, gatherFromTransfer, readClipboardImages, transferMayHoldImage, type Candidate } from '../io/import/gather'
-import { putAsset } from '../io/assets/assetStore'
+import { getAsset, putAsset } from '../io/assets/assetStore'
+import { PROJECT_EXT, packProject, unpackProject } from '../io/project'
+import type { SourceFormat } from '../io/import/sniff'
 import { beginGesture, canRedo, canUndo, commit, createHistory, endGesture, redo, undo, type History } from './store/history'
 import { AUTOSAVE_MS, restoreDoc, saveDoc } from './store/autosave'
 import { loadPrefs, savePrefs, type ComposeTab, type Mode, type PrintTab } from './prefs'
@@ -64,6 +66,7 @@ export default function App() {
   const [notice, showNotice] = useNotice()
   const [dropActive, setDropActive] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const projectInput = useRef<HTMLInputElement>(null)
   const storageWarned = useRef(false)
   const doc = hist.present
   const docRef = useRef(doc)
@@ -387,6 +390,38 @@ export default function App() {
       (done, total) => onProgress(done / total),
     ) ?? null
   }
+  const saveFile = (file: File) => {
+    const url = URL.createObjectURL(file)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+  // Guardar / Abrir proyecto: opening replaces the document in one undo step.
+  const project = {
+    canSave: hasImage,
+    onSave: async () => {
+      const assets = doc.layers.map((l) => getAsset(l.assetId)).filter((a) => !!a)
+      const blob = await packProject(doc, assets.map((a) => ({ id: a.id, name: a.name, format: a.format as SourceFormat, blob: a.blob, render: a.render, natural: a.natural })))
+      saveFile(new File([blob], `taller-de-grabado-${doc.technique}${PROJECT_EXT}`, { type: 'application/zip' }))
+      showNotice(t('notice.projectSaved'))
+    },
+    onOpen: () => projectInput.current?.click(),
+  }
+  const openProject = async (file: File) => {
+    try {
+      const { doc: next, assets, missing } = await unpackProject(file)
+      for (const a of assets) await putAsset(a)
+      setDoc(() => next)
+      setSelected(null)
+      showNotice(missing ? tf('notice.missing', { n: missing }) : t('notice.projectOpened'))
+    } catch {
+      showNotice(t('notice.projectBad'))
+    }
+  }
   const download = (blob: Blob, kind: ExportKind = 'png') => {
     const file = fileName(blob, lastSize.current.w, lastSize.current.h, kind)
     const url = URL.createObjectURL(file)
@@ -436,9 +471,9 @@ export default function App() {
     )
     else if (prefs.printTab === 'inks') panel = <InksPanel doc={doc} onInkMode={onInkMode} onActiveInk={onActiveInk} onInkColor={onInkColor} onInkOpacity={onInkOpacity} onMoveInk={onMoveInk} gesture={sliderGesture} />
     else if (prefs.printTab === 'material') panel = <MaterialPanel toggles={doc.toggles} onToggle={onToggle} paper={doc.paper} onPaper={onPaper} imperfections={doc.imperfections} onImperfections={onImperfections} gesture={sliderGesture} />
-    else panel = <PrintAdvancedPanel doc={doc} onToggle={onToggle} onSheet={onSheet} onSeed={onSeed} onNewSeed={onNewSeed} />
+    else panel = <PrintAdvancedPanel doc={doc} onToggle={onToggle} onSheet={onSheet} onSeed={onSeed} onNewSeed={onNewSeed} project={project} />
   } else {
-    if (prefs.composeTab === 'advanced') panel = <ComposeAdvancedPanel sheetId={doc.sheetId} onSheet={onSheet} />
+    if (prefs.composeTab === 'advanced') panel = <ComposeAdvancedPanel sheetId={doc.sheetId} onSheet={onSheet} project={project} />
     else if (prefs.composeTab === 'move') panel = <MovePanel layer={selectedLayer} sheet={sheet} edit={layerEdit} />
     else if (prefs.composeTab === 'crop') panel = <CropPanel layer={selectedLayer} edit={layerEdit} />
     else panel = (
@@ -492,6 +527,17 @@ export default function App() {
             }}
             onFloat={floatAction}
             onScreenLod={setScreenLod}
+          />
+          <input
+            ref={projectInput}
+            type="file"
+            accept={`${PROJECT_EXT},application/zip`}
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (f) openProject(f)
+            }}
           />
           <input
             ref={fileInput}
