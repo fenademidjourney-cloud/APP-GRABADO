@@ -16,6 +16,7 @@ export function applyPreset(d: Doc, technique: string): Doc {
     universal: { ...d.universal, ...def.universal },
     inkMode: def.inkMode ?? d.inkMode,
     inks,
+    inkOpacity: def.inkOpacity ? inks.map((_, i) => def.inkOpacity![i] ?? 0) : inks.map(() => 0),
     activeInk: Math.min(d.activeInk, inks.length - 1),
     paper: def.paper ?? d.paper,
     imperfections: def.imperfections,

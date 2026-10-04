@@ -21,6 +21,7 @@
 import { layerQuad } from '../model/layer'
 import { inkAbsorbance } from '../print/ink'
 import { PngStreamWriter } from '../io/export/pngStream'
+import { zip } from '../io/export/zip'
 import { voidAndCluster } from '../analysis/bluenoise'
 import { createProgram, parseHex, type GL, type Program } from './gl/gl'
 import { BLUR_FS, COMPOSITE_FS, LAYER_FS, LAYER_VS, QUAD_VS, SHADOW_FS, TONE_FS } from './shaders'
@@ -45,6 +46,8 @@ const BLEND_INDEX = { normal: 0, multiply: 1, screen: 2, darken: 3, lighten: 4 }
 /** Composite output: on screen (checkerboard behind transparency) or straight-alpha RGBA for files. */
 const OUTPUT_SCREEN = 0
 const OUTPUT_FILE = 1
+/** A separation film: one ink's clean matrix, grey (black = ink). */
+const OUTPUT_FILM = 2
 
 interface Texture { tex: WebGLTexture; w: number; h: number }
 interface Target { fb: WebGLFramebuffer; tex: WebGLTexture }
@@ -52,7 +55,7 @@ interface Target { fb: WebGLFramebuffer; tex: WebGLTexture }
 interface Pair { fb: WebGLFramebuffer; tex: [WebGLTexture, WebGLTexture] }
 type Targets = Record<'all' | 'auto' | 'plates0' | 'plates1', Target> & { tone: Pair }
 /** The whole sheet at analysis resolution: its layers, tone, and the blurred mass. */
-interface Analysis { w: number; h: number; k: number; layers: Targets; blur: Pair; mass: Pair }
+interface Analysis { w: number; h: number; k: number; layers: Targets; blur: Pair; mass: Pair; smooth: Pair; simplify: boolean }
 interface AssetSource { blob: Blob; natural: { w: number; h: number } }
 type SceneLayer = Scene['layers'][number]
 /** The sheet placed on a W × H target: its top-left corner (sx, sy), size and px per mm. */
@@ -401,7 +404,7 @@ export class Renderer {
     let a = reuse
     if (!a || a.w !== w || a.h !== h) {
       if (a) this.deleteAnalysis(a)
-      a = { w, h, k, layers: this.makeTargets(w, h), blur: this.makePair(w, h), mass: this.makePair(w, h) }
+      a = { w, h, k, layers: this.makeTargets(w, h), blur: this.makePair(w, h), mass: this.makePair(w, h), smooth: this.makePair(w, h), simplify: false }
     }
     a.k = k
     const f: Frame = { W: w, H: h, sx: 0, sy: 0, sw: widthMm * k, sh: heightMm * k, k }
@@ -411,16 +414,24 @@ export class Renderer {
     this.gl.disable(this.gl.BLEND)
     this.blurPass(a.layers.tone, a.blur, f, [tap / w, 0])
     this.blurPass(a.blur, a.mass, f, [0, tap / h])
+    // The stencil's simplification: the tone smoothed before the stencil is cut.
+    const sigma = scene.print.stencil?.simplifyMm ?? 0
+    a.simplify = sigma * k >= 0.5
+    if (a.simplify) {
+      const st = (sigma * k) / 3
+      this.blurPass(a.layers.tone, a.blur, f, [st / w, 0])
+      this.blurPass(a.blur, a.smooth, f, [0, st / h])
+    }
     return a
   }
 
   private deleteAnalysis(a: Analysis) {
     this.deleteTargets(a.layers)
-    this.deleteTargets([a.blur, a.mass])
+    this.deleteTargets([a.blur, a.mass, a.smooth])
   }
 
   /** Stage 3: registration, marks, impression, imperfections, ink and paper, into the bound framebuffer. */
-  private composite(t: Targets, a: Analysis, f: Frame, sheet: Scene['sheet'], pr: PrintScene, colors: SceneColors, checkPx: number, output: number) {
+  private composite(t: Targets, a: Analysis, f: Frame, sheet: Scene['sheet'], pr: PrintScene, colors: SceneColors, checkPx: number, output: number, sepInk = 0) {
     const gl = this.gl
     const cp = this.compositeProg
     const inks = pr.inks.slice(0, MAX_INKS)
@@ -433,6 +444,24 @@ export class Renderer {
     this.bindTex(cp, 3, 'uMass0', a.mass.tex[0])
     this.bindTex(cp, 5, 'uMass1', a.mass.tex[1])
     gl.uniform2f(cp.uniform('uMassUv'), a.k / a.w, a.k / a.h)
+    gl.uniform2f(cp.uniform('uAnSize'), a.w, a.h)
+    this.bindTex(cp, 6, 'uAnTone0', a.layers.tone.tex[0])
+    this.bindTex(cp, 7, 'uAnTone1', a.layers.tone.tex[1])
+    this.bindTex(cp, 8, 'uSmooth0', a.smooth.tex[0])
+    this.bindTex(cp, 9, 'uSmooth1', a.smooth.tex[1])
+    gl.uniform1i(cp.uniform('uSepInk'), sepInk)
+    const op = new Float32Array(MAX_INKS)
+    pr.inkOpacity.slice(0, MAX_INKS).forEach((o, i) => { op[i] = o })
+    gl.uniform1fv(cp.uniform('uOpacity'), op)
+    gl.uniform1i(cp.uniform('uBandsAcross'), pr.impression.bandsAcross ? 1 : 0)
+    const st = pr.stencil
+    gl.uniform1i(cp.uniform('uFill'), st?.fill ?? 0)
+    gl.uniform1i(cp.uniform('uLevels'), st?.levels ?? 0)
+    gl.uniform1i(cp.uniform('uSimplify'), st && a.simplify ? 1 : 0)
+    gl.uniform1f(cp.uniform('uFilmGrain'), st?.filmGrain ?? 0)
+    gl.uniform1f(cp.uniform('uGridMm'), st?.gridMm ?? 0)
+    gl.uniform1f(cp.uniform('uGridAngle'), ((st?.gridAngle ?? 0) * Math.PI) / 180)
+    gl.uniform1f(cp.uniform('uMaxDensity'), st?.maxDensity ?? 1)
     this.inkUniforms(cp, inks)
     gl.uniform1f(cp.uniform('uDensity'), pr.inkDensity)
     gl.uniform1f(cp.uniform('uContrast'), pr.contrast)
@@ -465,7 +494,7 @@ export class Renderer {
     gl.uniform2f(cp.uniform('uSheetMm'), sheet.widthMm, sheet.heightMm)
     gl.uniform1f(cp.uniform('uPxPerMm'), f.k)
     const sc = pr.screen
-    gl.uniform1i(cp.uniform('uEngine'), sc ? 1 : 0)
+    gl.uniform1i(cp.uniform('uEngine'), st ? 2 : sc ? 1 : 0)
     if (sc) {
       gl.uniform1i(cp.uniform('uFM'), sc.fm ? 1 : 0)
       gl.uniform1i(cp.uniform('uShape'), sc.shape)
@@ -515,7 +544,7 @@ export class Renderer {
       this.toneKey = toneKey
       this.tonePass(this.targets, f, scene.print)
     }
-    const analysisKey = JSON.stringify([scene.sheet, scene.layers, scene.print.inks, scene.print.contrast, this.textures.size])
+    const analysisKey = JSON.stringify([scene.sheet, scene.layers, scene.print.inks, scene.print.contrast, scene.print.stencil?.simplifyMm ?? 0, this.textures.size])
     if (!this.analysis || analysisKey !== this.analysisKey) {
       this.analysisKey = analysisKey
       this.analysis = this.runAnalysis(scene, texture, this.analysis)
@@ -540,7 +569,8 @@ export class Renderer {
 
   /**
    * Render the sheet at `job.widthPx × job.heightPx` tile by tile and stream it into a
-   * PNG. Between tiles it yields, so the preview keeps drawing and a cancel arrives.
+   * PNG — or, for separations, one grey film per ink plus the print, zipped. Between
+   * tiles it yields, so the preview keeps drawing and a cancel arrives.
    */
   async exportPng(job: ExportJob, onProgress: (done: number, total: number) => void, cancelled: () => boolean): Promise<Blob> {
     const gl = this.gl
@@ -551,7 +581,6 @@ export class Renderer {
     const TS = Math.max(256, Math.min(job.tileSize, this.maxTexture))
     const inkCount = Math.min(MAX_INKS, scene.print.inks.length)
     const print: PrintScene = { ...scene.print, paperOn: !job.transparent, compare: false }
-    const channels = job.transparent ? 4 : 3
 
     // Sources bigger than the preview texture are re-decoded at the size the export needs.
     const hiRes = new Map<string, Texture>()
@@ -581,50 +610,65 @@ export class Renderer {
     const targets = this.makeTargets(TA, TA)
     const out = this.makeTarget(TA, TA)
     const tile = new Uint8Array(TS * TS * 4)
-    const png = new PngStreamWriter(W, H, channels as 3 | 4, job.dpi)
     const cols = Math.ceil(W / TS)
     const rows = Math.ceil(H / TS)
+    const films = job.kind === 'separations' ? inkCount : 0
+    const total = cols * rows * (films + 1)
     let done = 0
-    try {
-      for (let ty = 0; ty < rows; ty++) {
-        const y0 = ty * TS
-        const th = Math.min(TS, H - y0)
-        const band = new Uint8Array(W * th * channels)
-        for (let tx = 0; tx < cols; tx++) {
-          if (cancelled() || gl.isContextLost()) throw new ExportCancelled()
-          const x0 = tx * TS
-          const tw = Math.min(TS, W - x0)
-          const f: Frame = { W: TA, H: TA, sx: A - x0, sy: A - y0, sw: W, sh: H, k }
-          this.layerPasses(targets, f, scene.layers, inkCount, texture)
-          this.tonePass(targets, f, print)
-          gl.bindFramebuffer(gl.FRAMEBUFFER, out.fb)
-          gl.viewport(0, 0, TA, TA)
-          gl.clearColor(0, 0, 0, 0)
-          gl.clear(gl.COLOR_BUFFER_BIT)
-          this.composite(targets, analysis, f, scene.sheet, print, scene.colors, 8, OUTPUT_FILE)
-          // Read the tile without its apron. Its top rows are the framebuffer's upper
-          // rows, which GL numbers from the bottom.
-          gl.readPixels(A, TA - A - th, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, tile)
-          gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-          for (let y = 0; y < th; y++) {
-            const srcRow = (th - 1 - y) * tw * 4
-            const dstRow = (y * W + x0) * channels
-            if (channels === 4) band.set(tile.subarray(srcRow, srcRow + tw * 4), dstRow)
-            else for (let x = 0; x < tw; x++) {
-              band[dstRow + x * 3] = tile[srcRow + x * 4]
-              band[dstRow + x * 3 + 1] = tile[srcRow + x * 4 + 1]
-              band[dstRow + x * 3 + 2] = tile[srcRow + x * 4 + 2]
+
+    /** One image of the sheet: the print (sepInk −1) or one ink's film (grey). */
+    const image = async (sepInk: number): Promise<Blob> => {
+      const channels = sepInk >= 0 ? 1 : job.transparent ? 4 : 3
+      const png = new PngStreamWriter(W, H, channels, job.dpi)
+      try {
+        for (let ty = 0; ty < rows; ty++) {
+          const y0 = ty * TS
+          const th = Math.min(TS, H - y0)
+          const band = new Uint8Array(W * th * channels)
+          for (let tx = 0; tx < cols; tx++) {
+            if (cancelled() || gl.isContextLost()) throw new ExportCancelled()
+            const x0 = tx * TS
+            const tw = Math.min(TS, W - x0)
+            const f: Frame = { W: TA, H: TA, sx: A - x0, sy: A - y0, sw: W, sh: H, k }
+            this.layerPasses(targets, f, scene.layers, inkCount, texture)
+            this.tonePass(targets, f, print)
+            gl.bindFramebuffer(gl.FRAMEBUFFER, out.fb)
+            gl.viewport(0, 0, TA, TA)
+            gl.clearColor(1, 1, 1, sepInk >= 0 ? 1 : 0)
+            gl.clear(gl.COLOR_BUFFER_BIT)
+            this.composite(targets, analysis, f, scene.sheet, print, scene.colors, 8, sepInk >= 0 ? OUTPUT_FILM : OUTPUT_FILE, sepInk)
+            // Read the tile without its apron. Its top rows are the framebuffer's upper
+            // rows, which GL numbers from the bottom.
+            gl.readPixels(A, TA - A - th, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, tile)
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+            for (let y = 0; y < th; y++) {
+              const srcRow = (th - 1 - y) * tw * 4
+              const dstRow = (y * W + x0) * channels
+              if (channels === 4) band.set(tile.subarray(srcRow, srcRow + tw * 4), dstRow)
+              else for (let x = 0; x < tw; x++) {
+                for (let c = 0; c < channels; c++) band[dstRow + x * channels + c] = tile[srcRow + x * 4 + c]
+              }
             }
+            onProgress(++done, total)
+            await new Promise((r) => setTimeout(r, 0))
           }
-          onProgress(++done, cols * rows)
-          await new Promise((r) => setTimeout(r, 0))
+          await png.writeRows(band, th)
         }
-        await png.writeRows(band, th)
+        return await png.finish()
+      } catch (e) {
+        png.abort()
+        throw e
       }
-      return await png.finish()
-    } catch (e) {
-      png.abort()
-      throw e
+    }
+
+    try {
+      if (job.kind !== 'separations') return await image(-1)
+      const entries = []
+      for (let i = 0; i < films; i++) {
+        entries.push({ name: job.names?.inks[i] ?? `ink-${i + 1}.png`, data: new Uint8Array(await (await image(i)).arrayBuffer()) })
+      }
+      entries.push({ name: job.names?.print ?? 'print.png', data: new Uint8Array(await (await image(-1)).arrayBuffer()) })
+      return zip(entries)
     } finally {
       this.deleteTargets(targets)
       this.deleteTargets([out])

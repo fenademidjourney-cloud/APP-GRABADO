@@ -5,6 +5,7 @@
 import type { EngineId, ParamDef, Params } from '../engines/types'
 import { defaultsOf } from '../engines/types'
 import { SCREEN_PARAMS } from '../engines/screen/params'
+import { STENCIL_PARAMS } from '../engines/stencil/params'
 import type { InkMode, PaperSettings, Universal } from '../model/doc'
 import type { ImperfectionId, ImperfectionSettings } from '../print/imperfections'
 import type { TextKey } from '../i18n'
@@ -33,6 +34,8 @@ export interface PresetDef {
   inkMode?: InkMode
   inks?: string[]
   paper?: PaperSettings
+  /** Per ink, 0..100: how much each pass covers what's under it (screenprint ink is opaque). */
+  inkOpacity?: number[]
   /** Up to five controls on top of the Efecto panel (universal ids or engine params). */
   essentials: string[]
   /** Engine parameters in Avanzado. */
@@ -45,9 +48,96 @@ export interface PresetDef {
 export const ENGINE_PARAMS: Record<EngineId, ParamDef[]> = {
   none: [],
   screen: SCREEN_PARAMS,
+  stencil: STENCIL_PARAMS,
 }
 
+const RISO_ADVANCED = ['fill', 'levels', 'angle', 'gain', 'maxDensity', 'masterDpi', 'pressure', 'roughness', 'grain', 'filmGrain']
+const SCREEN_ADVANCED = ['fill', 'levels', 'lpi', 'angle', 'gain', 'mesh', 'pressure', 'roughness', 'grain', 'filmGrain', 'fmDot']
+
 export const PRESETS: Record<string, PresetDef> = {
+  // Risograph: soy ink through a master burnt at 600 dpi; dots built on the master's
+  // grid, solids that never reach a full film, passes that drift up to a couple of mm.
+  risograph: {
+    engine: 'stencil',
+    impression: 'riso',
+    params: { fill: 'am', levels: 'cont', lpi: 65, angle: 45, fmDot: 130, gain: 30, filmGrain: 0, masterDpi: 600, mesh: 90, maxDensity: 88 },
+    universal: { contrast: 5, ink: 100, detail: 85, pressure: 50, roughness: 25, grain: 45, registration: 35 },
+    inkMode: 'two',
+    inks: ['#ff48b0', '#3255a4'],
+    inkOpacity: [0, 0],
+    paper: { id: 'white', texture: 55, light: 20 },
+    essentials: ['lpi', 'detail', 'ink', 'registration', 'contrast'],
+    advanced: [...RISO_ADVANCED, 'fmDot'],
+    imperfections: { amount: 40, enabled: ['pressure', 'starved', 'dust', 'bands'] },
+    variants: [
+      { nameKey: 'variant.risoPhoto', params: { fill: ['am'], levels: ['cont'], lpi: [55, 85] }, universal: { detail: [80, 95], registration: [15, 40], grain: [35, 55] }, imperfections: ['pressure', 'starved', 'dust', 'bands'], impAmount: [25, 45] },
+      { nameKey: 'variant.risoCoarse', params: { fill: ['am'], levels: ['cont'], lpi: [24, 40] }, universal: { detail: [70, 90], registration: [30, 60], grain: [40, 60] }, imperfections: ['pressure', 'starved', 'dust', 'bands'], impAmount: [35, 55] },
+      { nameKey: 'variant.risoFlat', params: { fill: ['solid'], levels: ['2', '3'] }, universal: { detail: [35, 65], registration: [40, 80], grain: [45, 70] }, imperfections: ['pressure', 'starved', 'dust'], impAmount: [30, 50] },
+      { nameKey: 'variant.risoMisprint', params: { fill: ['am'], levels: ['cont'], lpi: [45, 70] }, universal: { registration: [75, 100], grain: [60, 85], ink: [85, 110] }, imperfections: ['pressure', 'starved', 'dust', 'bands', 'ghost'], impAmount: [55, 80] },
+    ],
+  },
+  // Risograph in "grain" mode: a stochastic screen on the master instead of dots.
+  'risograph-grain': {
+    engine: 'stencil',
+    impression: 'riso',
+    params: { fill: 'fm', levels: 'cont', lpi: 65, angle: 45, fmDot: 130, gain: 20, filmGrain: 0, masterDpi: 600, mesh: 90, maxDensity: 88 },
+    universal: { contrast: 10, ink: 100, detail: 85, pressure: 50, roughness: 15, grain: 50, registration: 35 },
+    inkMode: 'two',
+    inks: ['#ff48b0', '#3255a4'],
+    inkOpacity: [0, 0],
+    paper: { id: 'white', texture: 55, light: 20 },
+    essentials: ['fmDot', 'detail', 'ink', 'registration', 'contrast'],
+    advanced: [...RISO_ADVANCED, 'lpi'],
+    imperfections: { amount: 40, enabled: ['pressure', 'starved', 'dust', 'bands'] },
+    variants: [
+      { nameKey: 'variant.grainFine', params: { fill: ['fm'], levels: ['cont'], fmDot: [85, 130] }, universal: { detail: [80, 95], registration: [15, 40] }, imperfections: ['pressure', 'starved', 'dust', 'bands'], impAmount: [25, 45] },
+      { nameKey: 'variant.grainCoarse', params: { fill: ['fm'], levels: ['cont'], fmDot: [200, 320] }, universal: { detail: [70, 90], registration: [25, 55], grain: [45, 65] }, imperfections: ['pressure', 'starved', 'dust', 'bands'], impAmount: [35, 55] },
+      { nameKey: 'variant.grainKey', params: { fill: ['solid'], levels: ['2'], filmGrain: [45, 80] }, universal: { detail: [55, 80], registration: [30, 60] }, imperfections: ['pressure', 'starved', 'dust'], impAmount: [30, 50] },
+      { nameKey: 'variant.risoMisprint', params: { fill: ['fm'], levels: ['cont'], fmDot: [110, 200] }, universal: { registration: [75, 100], grain: [60, 85] }, imperfections: ['pressure', 'starved', 'dust', 'bands', 'ghost'], impAmount: [55, 80] },
+    ],
+  },
+  // Screenprint: a thick, nearly opaque film squeegeed through a mesh; coarse
+  // halftones whose edges carry the mesh's teeth.
+  screenprint: {
+    engine: 'stencil',
+    impression: 'screenprint',
+    params: { fill: 'am', levels: 'cont', lpi: 35, angle: 22, fmDot: 200, gain: 20, filmGrain: 0, masterDpi: 600, mesh: 90, maxDensity: 100 },
+    universal: { contrast: 15, ink: 110, detail: 80, pressure: 50, roughness: 20, grain: 20, registration: 25 },
+    inkMode: 'two',
+    inks: ['#f15060', '#1d1d1b'],
+    inkOpacity: [70, 85],
+    paper: { id: 'cotton', texture: 45, light: 25 },
+    essentials: ['lpi', 'detail', 'ink', 'registration', 'contrast'],
+    advanced: SCREEN_ADVANCED,
+    imperfections: { amount: 30, enabled: ['pressure', 'dust', 'bands'] },
+    variants: [
+      { nameKey: 'variant.screenHalftone', params: { fill: ['am'], levels: ['cont'], lpi: [30, 50], mesh: [90, 140] }, universal: { detail: [75, 90], registration: [15, 35] }, imperfections: ['pressure', 'dust', 'bands'], impAmount: [20, 40] },
+      { nameKey: 'variant.screenPoster', params: { fill: ['solid'], levels: ['3', '4'] }, universal: { detail: [40, 65], registration: [20, 45] }, imperfections: ['pressure', 'dust', 'bands'], impAmount: [25, 45] },
+      { nameKey: 'variant.screenCoarseMesh', params: { fill: ['am'], levels: ['cont'], lpi: [18, 28], mesh: [40, 60] }, universal: { detail: [60, 80], roughness: [35, 60] }, imperfections: ['pressure', 'starved', 'dust', 'bands'], impAmount: [35, 55] },
+      { nameKey: 'variant.screenGrain', params: { fill: ['fm'], levels: ['cont'], fmDot: [180, 320] }, universal: { detail: [70, 90], registration: [20, 45] }, imperfections: ['pressure', 'dust', 'bands'], impAmount: [25, 45] },
+    ],
+  },
+  // Pop screenprint: flat colours cut from a simplified photo, a black key on top,
+  // passes visibly off register.
+  'pop-screenprint': {
+    engine: 'stencil',
+    impression: 'screenprint',
+    params: { fill: 'solid', levels: '2', lpi: 35, angle: 22, fmDot: 200, gain: 20, filmGrain: 10, masterDpi: 600, mesh: 90, maxDensity: 100 },
+    universal: { contrast: 25, ink: 110, detail: 45, pressure: 50, roughness: 30, grain: 20, registration: 55 },
+    inkMode: 'many',
+    inks: ['#ffe800', '#ff48b0', '#1d1d1b'],
+    inkOpacity: [85, 80, 90],
+    paper: { id: 'white', texture: 35, light: 20 },
+    essentials: ['levels', 'detail', 'registration', 'contrast', 'ink'],
+    advanced: SCREEN_ADVANCED,
+    imperfections: { amount: 30, enabled: ['pressure', 'dust', 'bands'] },
+    variants: [
+      { nameKey: 'variant.popFlat', params: { fill: ['solid'], levels: ['2'], filmGrain: [0, 15] }, universal: { detail: [35, 55], registration: [40, 65], contrast: [15, 35] }, imperfections: ['pressure', 'dust', 'bands'], impAmount: [20, 40] },
+      { nameKey: 'variant.popLevels', params: { fill: ['solid'], levels: ['3', '4'], filmGrain: [0, 15] }, universal: { detail: [40, 65], registration: [25, 50] }, imperfections: ['pressure', 'dust', 'bands'], impAmount: [20, 40] },
+      { nameKey: 'variant.popOffRegister', params: { fill: ['solid'], levels: ['2'] }, universal: { detail: [35, 55], registration: [80, 100], roughness: [30, 55] }, imperfections: ['pressure', 'starved', 'dust', 'bands'], impAmount: [35, 55] },
+      { nameKey: 'variant.popGrainKey', params: { fill: ['solid'], levels: ['2'], filmGrain: [45, 80] }, universal: { detail: [50, 75], registration: [35, 60] }, imperfections: ['pressure', 'dust', 'bands'], impAmount: [25, 45] },
+    ],
+  },
   // Newsprint: coarse round dots; soft absorbent paper gives ~20–25 % gain in the midtones.
   'newspaper-halftone': {
     engine: 'screen',

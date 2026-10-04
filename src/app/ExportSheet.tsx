@@ -10,7 +10,9 @@ import type { ExportHandle } from '../render/renderHost'
 // dark button per panel). The PNG is rendered tile by tile at the final resolution,
 // never upscaled from the preview.
 
-export type Exporter = (o: { widthPx: number; heightPx: number; dpi: number; transparent: boolean; tileSize: number }, onProgress: (done: number, total: number) => void) => ExportHandle | null
+export type ExportKind = 'png' | 'separations'
+
+export type Exporter = (o: { widthPx: number; heightPx: number; dpi: number; transparent: boolean; tileSize: number; kind: ExportKind; names?: { inks: string[]; print: string } }, onProgress: (done: number, total: number) => void) => ExportHandle | null
 
 export function isCoarsePointer(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
@@ -37,8 +39,8 @@ export function ExportSheet({ mode, sheet, paperOn, scale, customDpi, unit, onPa
   onScale: (s: ExportScale) => void
   onCustomDpi: (dpi: number) => void
   onUnit: (u: LengthUnit) => void
-  start: (o: { dpi: number; widthPx: number; heightPx: number }, onProgress: (p: number) => void) => ExportHandle | null
-  onFinished: (blob: Blob) => void
+  start: (o: { dpi: number; widthPx: number; heightPx: number; kind: ExportKind }, onProgress: (p: number) => void) => ExportHandle | null
+  onFinished: (blob: Blob, kind: ExportKind) => void
   onFailed: (cancelled: boolean) => void
   onShare: (blob: Blob) => void
   onClose: () => void
@@ -49,6 +51,8 @@ export function ExportSheet({ mode, sheet, paperOn, scale, customDpi, unit, onPa
   const px = exportPixels(sheet, dpi)
   const [progress, setProgress] = useState<number | null>(null)
   const [ready, setReady] = useState<Blob | null>(null)
+  // Sharing is for the print only; separations are a file for the printer.
+  const [kind, setKind] = useState<ExportKind>('png')
   const running = useRef<{ cancel: () => void } | null>(null)
 
   useEffect(() => {
@@ -58,12 +62,12 @@ export function ExportSheet({ mode, sheet, paperOn, scale, customDpi, unit, onPa
   }, [onClose])
 
   const go = () => {
-    const job = start({ dpi, widthPx: px.w, heightPx: px.h }, (p) => setProgress(p))
+    const job = start({ dpi, widthPx: px.w, heightPx: px.h, kind }, (p) => setProgress(p))
     if (!job) return
     running.current = job
     setProgress(0)
     job.promise
-      .then((blob) => { if (mode === 'share') setReady(blob); else onFinished(blob) })
+      .then((blob) => { if (mode === 'share') setReady(blob); else onFinished(blob, kind) })
       .catch((e: { cancelled?: boolean }) => onFailed(!!e?.cancelled))
       .finally(() => { running.current = null; setProgress(null) })
   }
@@ -80,6 +84,17 @@ export function ExportSheet({ mode, sheet, paperOn, scale, customDpi, unit, onPa
       <div className="overlay-sheet" role="dialog" aria-modal="true" aria-label={t('export.title')}>
         <h2 className="overlay-title">{t('export.title')}</h2>
         <fieldset className="panel-fieldset" disabled={progress !== null || !!ready}>
+          {mode === 'download' && (
+            <>
+              <Label>{t('export.format')}</Label>
+              <Segmented
+                value={kind}
+                onChange={setKind}
+                options={[{ value: 'png', label: t('export.formatPng') }, { value: 'separations', label: t('export.formatSeps') }]}
+              />
+              <p className="sheet-note">{t(kind === 'separations' ? 'export.sepsNote' : 'export.pngNote')}</p>
+            </>
+          )}
           <Label>{t('export.background')}</Label>
           <Segmented
             value={paperOn ? 'paper' : 'transparent'}
@@ -129,7 +144,7 @@ export function ExportSheet({ mode, sheet, paperOn, scale, customDpi, unit, onPa
         {ready ? (
           <button type="button" className="wide-btn dark" onClick={() => onShare(ready)}>{t('export.share')}</button>
         ) : progress === null ? (
-          <button type="button" className="wide-btn dark" onClick={go}>{mode === 'share' ? t('export.prepareShare') : t('export.go')}</button>
+          <button type="button" className="wide-btn dark" onClick={go}>{mode === 'share' ? t('export.prepareShare') : kind === 'separations' ? t('export.goSeps') : t('export.go')}</button>
         ) : (
           <div className="export-progress" role="status" aria-live="polite">
             <span className="ring" style={{ '--p': `${Math.round(progress * 100)}%` } as React.CSSProperties} aria-hidden="true" />

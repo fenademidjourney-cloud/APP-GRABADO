@@ -4,7 +4,7 @@
 
 import type { TextKey } from '../i18n'
 
-export type EngineId = 'none' | 'screen'
+export type EngineId = 'none' | 'screen' | 'stencil'
 
 export type ParamValue = number | string
 export type Params = Record<string, ParamValue>

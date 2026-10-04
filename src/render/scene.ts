@@ -6,6 +6,7 @@ import type { Layer } from '../model/layer'
 import type { View } from './view'
 import type { ScreenUniforms } from '../engines/screen/params'
 import type { InkRegistration } from '../print/registration'
+import type { StencilUniforms } from '../engines/stencil/params'
 
 export interface SceneColors {
   card: string      // the canvas card (token --card)
@@ -16,6 +17,7 @@ export interface SceneColors {
 /** What the print pipeline needs (docs/PLANNING.md §C.3, §D). */
 export interface PrintScene {
   inks: string[]          // sRGB hex, print order
+  inkOpacity: number[]    // per ink, 0..1
   inkDensity: number      // ink film, 1 = nominal
   contrast: number        // −1..1
   paperOn: boolean
@@ -26,12 +28,13 @@ export interface PrintScene {
   /** Per ink, in print order; all zero with Registro off. */
   registration: InkRegistration[]
   /** Impression model; `on` false ("Textura de tinta" off) = ideal print. contact and depletion: print/impression.ts. */
-  impression: { on: boolean; pressure: number; grain: number; bleedMm: number; contact: number; depletion: number }
+  impression: { on: boolean; pressure: number; grain: number; bleedMm: number; contact: number; depletion: number; bandsAcross: boolean }
   /** amount 0..1 (0 with Imperfecciones off) and print/imperfections.ts · IMPERFECTION_BIT mask. */
   imperfections: { amount: number; mask: number }
   paper: { color: string; fibre: number; flocs: number; texture: number; relief: number; light: number }
-  /** The technique engine; absent (or Técnica off) = continuous ink. */
+  /** The technique engine; absent (or Técnica off) = continuous ink. A stencil with AM or FM fill also sends `screen`. */
   screen?: ScreenUniforms
+  stencil?: StencilUniforms
 }
 
 export interface Scene {
@@ -52,6 +55,10 @@ export interface ExportJob {
   dpi: number              // written into the file (pHYs)
   transparent: boolean     // only the ink, no paper
   tileSize: number         // smaller on phones
+  /** png: the print · separations: a ZIP with one grey film per ink plus the print. */
+  kind: 'png' | 'separations'
+  /** File names inside the ZIP (separations): one per ink, then the print. */
+  names?: { inks: string[]; print: string }
 }
 
 export type ToRenderer =

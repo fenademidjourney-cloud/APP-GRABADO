@@ -44,15 +44,15 @@ export class PngStreamWriter {
   private prevRow: Uint8Array
 
   /**
-   * @param channels 3 = RGB (opaque), 4 = RGBA with straight (non-premultiplied) alpha
+   * @param channels 1 = grey (separation films), 3 = RGB (opaque), 4 = RGBA with straight (non-premultiplied) alpha
    */
-  constructor(readonly width: number, readonly height: number, readonly channels: 3 | 4, dpi: number) {
+  constructor(readonly width: number, readonly height: number, readonly channels: 1 | 3 | 4, dpi: number) {
     const ihdr = new Uint8Array(13)
     const v = new DataView(ihdr.buffer)
     v.setUint32(0, width)
     v.setUint32(4, height)
     ihdr[8] = 8                       // bit depth
-    ihdr[9] = channels === 4 ? 6 : 2  // colour type: RGBA / RGB
+    ihdr[9] = channels === 4 ? 6 : channels === 3 ? 2 : 0  // colour type: RGBA / RGB / grey
     const phys = new Uint8Array(9)
     const pv = new DataView(phys.buffer)
     const ppm = Math.round(dpi / 0.0254)

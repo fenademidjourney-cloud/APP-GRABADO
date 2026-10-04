@@ -7,31 +7,41 @@
 //   depletion  how fast large masses run out of ink
 //   bleed      how far the ink wicks along the fibres (fluid riso and screen inks
 //              more than stiff relief ink)
+//   bandsAcross  'bands' imperfection: riso drums leave bands across the feed (they
+//              vary down the sheet); a squeegee leaves streaks along its stroke (they
+//              vary across it)
 
 import { PRESETS } from '../presets/defs'
 import { techniqueById, type ProcessFamily } from '../presets/catalog'
 
-export type ImpressionModel = 'relief' | 'intaglio' | 'planographic' | 'stencil' | 'offset'
+export type ImpressionModel = 'relief' | 'intaglio' | 'planographic' | 'riso' | 'screenprint' | 'offset'
 
-export interface ImpressionWeights { contact: number; depletion: number; bleed: number }
+export interface ImpressionWeights { contact: number; depletion: number; bleed: number; bandsAcross: boolean }
 
 export const IMPRESSION: Record<ImpressionModel, ImpressionWeights> = {
-  relief: { contact: 1, depletion: 1, bleed: 0.6 },
-  intaglio: { contact: 0.2, depletion: 0.3, bleed: 0.5 },
-  planographic: { contact: 0.45, depletion: 0.6, bleed: 0.6 },
-  stencil: { contact: 0.55, depletion: 1, bleed: 1 },
-  offset: { contact: 0.3, depletion: 0.5, bleed: 0.8 },
+  relief: { contact: 1, depletion: 1, bleed: 0.6, bandsAcross: false },
+  intaglio: { contact: 0.2, depletion: 0.3, bleed: 0.5, bandsAcross: false },
+  planographic: { contact: 0.45, depletion: 0.6, bleed: 0.6, bandsAcross: false },
+  // Soy ink pushed through a master: absorbed into the paper, starved in masses.
+  riso: { contact: 0.55, depletion: 1, bleed: 1, bandsAcross: false },
+  // A thick film laid through the mesh: it bridges the paper's valleys.
+  screenprint: { contact: 0.25, depletion: 0.4, bleed: 0.5, bandsAcross: true },
+  offset: { contact: 0.3, depletion: 0.5, bleed: 0.8, bandsAcross: false },
 }
 
 const BY_PROCESS: Record<ProcessFamily, ImpressionModel> = {
   relief: 'relief',
   intaglio: 'intaglio',
   planographic: 'planographic',
-  stencil: 'stencil',
+  stencil: 'riso',
   photomechanical: 'offset',
   digital: 'offset',
 }
 
+export function impressionModelOf(technique: string): ImpressionModel {
+  return PRESETS[technique]?.impression ?? BY_PROCESS[techniqueById(technique).process]
+}
+
 export function impressionOf(technique: string): ImpressionWeights {
-  return IMPRESSION[PRESETS[technique]?.impression ?? BY_PROCESS[techniqueById(technique).process]]
+  return IMPRESSION[impressionModelOf(technique)]
 }

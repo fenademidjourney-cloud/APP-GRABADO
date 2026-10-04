@@ -42,6 +42,7 @@ const UNIVERSAL_DEFS: Record<UniversalKey, { label: TextKey; hint: TextKey; min:
 
 /** Controls that don't apply to the current settings (e.g. lpi with a stochastic screen). */
 function inapplicable(engine: string, params: Params): string[] {
+  if (engine === 'stencil') return params.fill === 'solid' ? ['lpi', 'angle', 'fmDot', 'gain'] : params.fill === 'fm' ? ['lpi', 'angle'] : ['fmDot']
   if (engine !== 'screen') return []
   return params.shape === 'fm' ? ['lpi', 'angle', 'moire', 'detail'] : ['fmDot']
 }
@@ -80,7 +81,7 @@ export function EffectPanel({ hasImage, technique, techniqueOn, inkCount, univer
           min={u.min}
           max={u.max}
           gesture={gesture}
-          hint={t(u.hint)}
+          hint={t(id === 'detail' && engine === 'stencil' ? 'effect.detailHintStencil' : u.hint)}
           onChange={(n) => onUniversal(id as UniversalKey, n)}
         />,
       )
@@ -130,12 +131,17 @@ function Check({ dark }: { dark?: boolean }) {
   )
 }
 
-export function InksPanel({ doc, onInkMode, onActiveInk, onInkColor }: {
+export function InksPanel({ doc, onInkMode, onActiveInk, onInkColor, onInkOpacity, onMoveInk, gesture }: {
   doc: Doc
   onInkMode: (m: InkMode) => void
   onActiveInk: (i: number) => void
   onInkColor: (hex: string, gesture?: boolean) => void
+  onInkOpacity: (v: number) => void
+  onMoveInk: (dir: -1 | 1) => void
+  gesture: SliderGesture
 }) {
+  const opacity = doc.inkOpacity[doc.activeInk] ?? 0
+  const fluor = doc.inks.some((hex) => INK_LIBRARY.some((c) => c.fluor && c.hex === hex))
   const active = doc.inks[doc.activeInk]
   const isLibrary = INK_LIBRARY.some((c) => c.hex === active)
   const note = doc.inkMode === 'one' ? t('inks.oneNote') : doc.inkMode === 'two' ? t('inks.twoNote') : t('inks.manyNote')
@@ -179,6 +185,18 @@ export function InksPanel({ doc, onInkMode, onActiveInk, onInkColor }: {
           {!isLibrary && <Check />}
         </label>
       </div>
+      {fluor && <p className="sheet-note">{t('inks.fluor')}</p>}
+      <RangeControl label={t('inks.opacity')} display={`${opacity}%`} value={opacity} min={0} max={100} gesture={gesture} hint={t('inks.opacityHint')} onChange={onInkOpacity} />
+      {doc.inks.length > 1 && (
+        <Advanced>
+          <Label>{t('inks.order')}</Label>
+          <div className="chips" role="group" aria-label={t('inks.order')}>
+            <button type="button" aria-label={t('inks.earlierLabel')} disabled={doc.activeInk === 0} onClick={() => onMoveInk(-1)}>{t('inks.earlier')}</button>
+            <button type="button" aria-label={t('inks.laterLabel')} disabled={doc.activeInk === doc.inks.length - 1} onClick={() => onMoveInk(1)}>{t('inks.later')}</button>
+          </div>
+          <p className="sheet-note">{t('inks.orderNote')}</p>
+        </Advanced>
+      )}
     </div>
   )
 }

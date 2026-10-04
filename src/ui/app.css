@@ -23,6 +23,7 @@
 .seed-row { display: flex; gap: 6px; align-items: stretch; }
 .seed-row .seed-field { flex: 1 1 auto; min-width: 0; background: var(--white); text-align: left; font-variant-numeric: tabular-nums; }
 .seed-row .chips { flex: none; }
+.chips button:disabled { opacity: .3; cursor: default; }
 .selector:disabled { opacity: .3; cursor: default; }
 
 /* Ink chips: which ink the colour swatches apply to. */

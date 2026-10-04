@@ -50,6 +50,8 @@ export interface Doc {
   sheetId: string
   inkMode: InkMode
   inks: string[]          // hex sRGB, print order
+  /** Per ink, 0..100: 0 = transparent (overprints), 100 = covers what's under it. Same length as inks. */
+  inkOpacity: number[]
   activeInk: number
   toggles: CleanToggles
   universal: Universal
@@ -64,9 +66,9 @@ export interface Doc {
 }
 
 /** Spot inks inspired by printing / stencil-duplicator inks. Generic names, approximate on screen. */
-export const INK_LIBRARY: Array<{ id: string; name: string; hex: string; light?: boolean }> = [
+export const INK_LIBRARY: Array<{ id: string; name: string; hex: string; light?: boolean; fluor?: boolean }> = [
   { id: 'black', name: 'Negro', hex: '#1d1d1b' },
-  { id: 'fluor-pink', name: 'Rosa flúor', hex: '#ff48b0' },
+  { id: 'fluor-pink', name: 'Rosa flúor', hex: '#ff48b0', fluor: true },
   { id: 'bright-red', name: 'Rojo vivo', hex: '#f15060' },
   { id: 'orange', name: 'Naranja', hex: '#ff6c2f' },
   { id: 'yellow', name: 'Amarillo', hex: '#ffe800', light: true },
@@ -88,11 +90,36 @@ export function inksFor(mode: InkMode, current: string[]): string[] {
   return Array.from({ length: n }, (_, i) => current[i] ?? DEFAULT_INKS[mode][i] ?? DEFAULT_INKS.many[i % 3])
 }
 
+/** Opacities for `n` inks: the current ones kept, new inks transparent. */
+export function opacitiesFor(n: number, current: number[]): number[] {
+  return Array.from({ length: n }, (_, i) => current[i] ?? 0)
+}
+
+/**
+ * Move ink `i` one pass earlier (−1) or later (+1). Its colour, opacity and the layers
+ * sent to it travel with it, so the print only changes in what overlaps what.
+ */
+export function moveInk(d: Doc, i: number, dir: -1 | 1): Doc {
+  const j = i + dir
+  if (i < 0 || j < 0 || i >= d.inks.length || j >= d.inks.length) return d
+  const swap = <T,>(a: T[]) => a.map((v, k) => (k === i ? a[j] : k === j ? a[i] : v))
+  const ti = `ink-${i + 1}`
+  const tj = `ink-${j + 1}`
+  return {
+    ...d,
+    inks: swap(d.inks),
+    inkOpacity: swap(d.inkOpacity),
+    activeInk: d.activeInk === i ? j : d.activeInk === j ? i : d.activeInk,
+    layers: d.layers.map((l) => (l.inkTarget === ti ? { ...l, inkTarget: tj } : l.inkTarget === tj ? { ...l, inkTarget: ti } : l)),
+  }
+}
+
 export const DEFAULT_DOC: Doc = {
   technique: DEFAULT_TECHNIQUE,
   sheetId: DEFAULT_SHEET.id,
   inkMode: 'two',
   inks: DEFAULT_INKS.two,
+  inkOpacity: [0, 0],
   activeInk: 0,
   toggles: { technique: true, inkTexture: true, imperfections: true, paper: true, color: true, registration: true },
   universal: { contrast: 0, ink: 100, detail: 50, pressure: 50, roughness: 20, grain: 40, registration: 25 },

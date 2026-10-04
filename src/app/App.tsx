@@ -7,7 +7,7 @@ import { Selector } from '../ui/selector'
 import { ProcessGlyph } from '../ui/process-glyphs'
 import { techniqueById } from '../presets/catalog'
 import { SHEET_SIZES, DEFAULT_SHEET } from '../model/sheet'
-import { DEFAULT_DOC, inksFor, type CleanToggles, type Doc, type InkMode, type PaperSettings, type Universal } from '../model/doc'
+import { DEFAULT_DOC, inksFor, moveInk, opacitiesFor, INK_LIBRARY, type CleanToggles, type Doc, type InkMode, type PaperSettings, type Universal } from '../model/doc'
 import { createLayer, type Layer } from '../model/layer'
 import { paperById } from '../model/paper'
 import { applyPreset } from '../presets/apply'
@@ -15,9 +15,10 @@ import { engineOf, variantsOf } from '../presets/defs'
 import { rollVariant } from '../presets/variant'
 import { imperfectionMask, type ImperfectionSettings } from '../print/imperfections'
 import { registrationOffsets } from '../print/registration'
-import { impressionOf } from '../print/impression'
+import { IMPRESSION, impressionModelOf } from '../print/impression'
 import { newSeed } from '../util/seed'
 import { resolveScreen } from '../engines/screen/params'
+import { resolveStencil } from '../engines/stencil/params'
 import type { ParamValue } from '../engines/types'
 import type { PrintScene } from '../render/scene'
 import { duplicateLayer, reorder, updateLayer } from '../model/layerOps'
@@ -33,7 +34,7 @@ import { CanvasCard, type FloatAction } from './CanvasCard'
 import { ComposeAdvancedPanel, EffectPanel, InksPanel, MaterialPanel, PrintAdvancedPanel, TechniqueList } from './panels/Panels'
 import { CropPanel, LayersPanel, MovePanel, type LayerEdit } from './panels/ComposePanels'
 import { DiagSheet, GuideSheet } from './Overlays'
-import { ExportSheet, canShareFiles, isCoarsePointer, type Exporter } from './ExportSheet'
+import { ExportSheet, canShareFiles, isCoarsePointer, type ExportKind, type Exporter } from './ExportSheet'
 
 // The screen: header · canvas card · tool row · bottom sheet (03-anatomia-y-layout.md).
 // Images enter by file picker, drag & drop, paste (Ctrl/Cmd + V) or the PEGAR
@@ -52,7 +53,7 @@ const IMPORT_NOTICE: Record<ImportErrorCode, TextKey> = {
 
 export default function App() {
   const [prefs, setPrefs] = useState(loadPrefs)
-  const [hist, setHist] = useState<History<Doc>>(() => createHistory(DEFAULT_DOC))
+  const [hist, setHist] = useState<History<Doc>>(() => createHistory(applyPreset(DEFAULT_DOC, DEFAULT_DOC.technique)))
   const [techniqueOpen, setTechniqueOpen] = useState(false)
   const [overlay, setOverlay] = useState<'none' | 'guide' | 'diag' | 'export' | 'share'>(() => (location.hash === '#diag' ? 'diag' : 'none'))
   const exporterRef = useRef<Exporter | null>(null)
@@ -172,9 +173,13 @@ export default function App() {
   const print: Omit<PrintScene, 'compare'> = useMemo(() => {
     const paper = paperById(doc.paper.id)
     const u = doc.universal
-    const model = impressionOf(doc.technique)
+    const modelId = impressionModelOf(doc.technique)
+    const model = IMPRESSION[modelId]
+    const engine = doc.toggles.technique ? engineOf(doc.technique) : 'none'
+    const stencil = engine === 'stencil' ? resolveStencil(doc.params, u, doc.inks.length, modelId === 'screenprint' ? 'mesh' : 'master') : null
     return {
       inks: doc.inks,
+      inkOpacity: doc.inkOpacity.map((o) => o / 100),
       inkDensity: u.ink / 100,
       contrast: u.contrast / 100,
       paperOn: doc.toggles.paper,
@@ -189,13 +194,15 @@ export default function App() {
         bleedMm: doc.toggles.paper ? 0.12 * model.bleed * paper.absorb * Math.min(1.5, u.ink / 100) * (0.5 + u.pressure / 100) : 0,
         contact: model.contact,
         depletion: model.depletion,
+        bandsAcross: model.bandsAcross,
       },
       imperfections: {
         amount: doc.toggles.imperfections ? doc.imperfections.amount / 100 : 0,
         mask: imperfectionMask(doc.imperfections.enabled),
       },
       paper: { color: paper.color, fibre: paper.fibre, flocs: paper.flocs, texture: doc.paper.texture / 100, relief: paper.relief, light: doc.paper.light / 100 },
-      screen: doc.toggles.technique && engineOf(doc.technique) === 'screen' ? resolveScreen(doc.params, u, doc.inks.length) : undefined,
+      screen: engine === 'screen' ? resolveScreen(doc.params, u, doc.inks.length) : stencil?.screen,
+      stencil: stencil?.stencil,
     }
   }, [doc.inks, doc.universal, doc.toggles, doc.paper, doc.technique, doc.params, doc.seed, doc.imperfections])
   const [screenLod, setScreenLod] = useState(false)
@@ -325,8 +332,10 @@ export default function App() {
   const onParam = (id: string, v: ParamValue, key?: string) => setDoc((d) => ({ ...d, params: { ...d.params, [id]: v } }), key)
   const onInkMode = (inkMode: InkMode) => setDoc((d) => {
     const inks = inksFor(inkMode, d.inks)
-    return { ...d, inkMode, inks, activeInk: Math.min(d.activeInk, inks.length - 1) }
+    return { ...d, inkMode, inks, inkOpacity: opacitiesFor(inks.length, d.inkOpacity), activeInk: Math.min(d.activeInk, inks.length - 1) }
   })
+  const onInkOpacity = (v: number) => setDoc((d) => ({ ...d, inkOpacity: d.inkOpacity.map((o, i) => (i === d.activeInk ? v : o)) }), `ink-opacity-${doc.activeInk}`)
+  const onMoveInk = (dir: -1 | 1) => setDoc((d) => moveInk(d, d.activeInk, dir))
   const onActiveInk = (activeInk: number) => setDoc((d) => ({ ...d, activeInk }), 'active-ink')
   // The colour picker fires continuously while dragging: coalesce it into one step by key.
   const onInkColor = (hex: string, gesture?: boolean) =>
@@ -334,17 +343,25 @@ export default function App() {
 
   // Export: a PNG named after the technique and its size, saved with a plain download link
   // (works on file:// too); sharing hands the same file to the system share sheet.
-  const fileName = (blob: Blob, w: number, h: number) => new File([blob], `taller-de-grabado-${doc.technique}-${w}x${h}.png`, { type: 'image/png' })
+  const fileName = (blob: Blob, w: number, h: number, kind: ExportKind = 'png') => kind === 'separations'
+    ? new File([blob], `taller-de-grabado-${doc.technique}-${w}x${h}-separaciones.zip`, { type: 'application/zip' })
+    : new File([blob], `taller-de-grabado-${doc.technique}-${w}x${h}.png`, { type: 'image/png' })
   const lastSize = useRef({ w: 0, h: 0 })
-  const startExport = (o: { dpi: number; widthPx: number; heightPx: number }, onProgress: (p: number) => void) => {
+  const startExport = (o: { dpi: number; widthPx: number; heightPx: number; kind: ExportKind }, onProgress: (p: number) => void) => {
     lastSize.current = { w: o.widthPx, h: o.heightPx }
+    // Films are named after their pass and colour: "tinta-1-rosa-fluor.png".
+    const slug = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    const names = {
+      inks: doc.inks.map((hex, i) => `${tf('sep.ink', { n: i + 1 })}-${slug(INK_LIBRARY.find((c) => c.hex === hex)?.name ?? hex.slice(1))}.png`),
+      print: `${t('sep.print')}.png`,
+    }
     return exporterRef.current?.(
-      { ...o, transparent: !doc.toggles.paper, tileSize: isCoarsePointer() ? 1024 : 2048 },
+      { ...o, names, transparent: !doc.toggles.paper, tileSize: isCoarsePointer() ? 1024 : 2048 },
       (done, total) => onProgress(done / total),
     ) ?? null
   }
-  const download = (blob: Blob) => {
-    const file = fileName(blob, lastSize.current.w, lastSize.current.h)
+  const download = (blob: Blob, kind: ExportKind = 'png') => {
+    const file = fileName(blob, lastSize.current.w, lastSize.current.h, kind)
     const url = URL.createObjectURL(file)
     const a = document.createElement('a')
     a.href = url
@@ -354,7 +371,7 @@ export default function App() {
     a.remove()
     window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
     setOverlay('none')
-    showNotice(t('notice.exported'))
+    showNotice(t(kind === 'separations' ? 'notice.exportedZip' : 'notice.exported'))
   }
   const share = async (blob: Blob) => {
     const file = fileName(blob, lastSize.current.w, lastSize.current.h)
@@ -390,7 +407,7 @@ export default function App() {
         zoomHint={screenLod}
       />
     )
-    else if (prefs.printTab === 'inks') panel = <InksPanel doc={doc} onInkMode={onInkMode} onActiveInk={onActiveInk} onInkColor={onInkColor} />
+    else if (prefs.printTab === 'inks') panel = <InksPanel doc={doc} onInkMode={onInkMode} onActiveInk={onActiveInk} onInkColor={onInkColor} onInkOpacity={onInkOpacity} onMoveInk={onMoveInk} gesture={sliderGesture} />
     else if (prefs.printTab === 'material') panel = <MaterialPanel toggles={doc.toggles} onToggle={onToggle} paper={doc.paper} onPaper={onPaper} imperfections={doc.imperfections} onImperfections={onImperfections} gesture={sliderGesture} />
     else panel = <PrintAdvancedPanel doc={doc} onToggle={onToggle} onSheet={onSheet} onSeed={onSeed} onNewSeed={onNewSeed} />
   } else {

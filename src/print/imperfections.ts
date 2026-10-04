@@ -8,10 +8,12 @@
 //             white halo) on presses
 //   wear      worn plate: edges and fine streaks that stop printing
 //   stains    on the paper: foxing and stains with a darker rim (coffee-ring effect)
+//   bands     riso drum bands across the feed / squeegee streaks along the stroke
+//   ghost     a faint second image of the plate a few cm away (riso ghosting, set-off)
 // Each preset brings its own set; they switch on and off together (Material ·
 // IMPERFECCIONES) and each one has its chip.
 
-export const IMPERFECTIONS = ['pressure', 'starved', 'dust', 'wear', 'stains'] as const
+export const IMPERFECTIONS = ['pressure', 'starved', 'dust', 'wear', 'stains', 'bands', 'ghost'] as const
 export type ImperfectionId = (typeof IMPERFECTIONS)[number]
 
 export interface ImperfectionSettings {
@@ -26,6 +28,8 @@ export const IMPERFECTION_BIT: Record<ImperfectionId, number> = {
   dust: 4,
   wear: 8,
   stains: 16,
+  bands: 32,
+  ghost: 64,
 }
 
 export const DEFAULT_IMPERFECTIONS: ImperfectionSettings = { amount: 35, enabled: ['pressure', 'starved', 'dust'] }

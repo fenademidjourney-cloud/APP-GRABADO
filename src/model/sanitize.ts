@@ -3,7 +3,7 @@
 // fields are dropped; a technique or sheet that no longer exists falls back.
 
 import { CATALOG } from '../presets/catalog'
-import { DEFAULT_DOC, inksFor, type CleanToggles, type Doc, type InkMode } from './doc'
+import { DEFAULT_DOC, inksFor, opacitiesFor, type CleanToggles, type Doc, type InkMode } from './doc'
 import type { BlendMode, Layer } from './layer'
 import { SHEET_SIZES } from './sheet'
 import { PAPERS } from './paper'
@@ -85,6 +85,7 @@ export function sanitizeDoc(v: unknown): Doc {
     sheetId: pick(v.sheetId, SHEET_SIZES.map((s) => s.id), d.sheetId),
     inkMode,
     inks,
+    inkOpacity: opacitiesFor(inks.length, Array.isArray(v.inkOpacity) ? v.inkOpacity.map((o) => num(o, 0, 0, 100)) : []),
     activeInk: Math.round(num(v.activeInk, 0, 0, inks.length - 1)),
     toggles,
     universal: {
