@@ -111,3 +111,21 @@ describe('Variante (dice)', () => {
     }
   })
 })
+
+describe('Variante in every technique', () => {
+  it('every style of every preset gives a valid, different document', async () => {
+    const { PRESETS } = await import('../presets/defs')
+    for (const id of Object.keys(PRESETS)) {
+      let d = applyPreset({ ...DEFAULT_DOC }, id)
+      const seen = new Set<number>()
+      for (let seed = 1; seed <= 24; seed++) {
+        const { doc, index } = rollVariant(d, seed)
+        seen.add(index)
+        expect(sanitizeDoc(doc)).toEqual(doc)
+        expect(JSON.stringify(doc.params) + JSON.stringify(doc.universal)).not.toBe(JSON.stringify(d.params) + JSON.stringify(d.universal))
+        d = doc
+      }
+      expect(seen.size).toBe(PRESETS[id].variants.length) // every style comes up
+    }
+  })
+})

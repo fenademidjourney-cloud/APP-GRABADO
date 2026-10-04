@@ -36,7 +36,7 @@ export const es = {
   'print.effect': 'Efecto: cómo se talla y se imprime la matriz',
   'print.inks': 'Tintas: cuántas y de qué color',
   'print.material': 'Material: papel e imperfecciones',
-  'print.advanced': 'Avanzado: modo limpio, pliego y semilla',
+  'print.advanced': 'Avanzado: modo limpio, semilla, proyecto y pliego',
   'print.variant': 'Variante: probá otra versión de esta técnica',
   'print.technique': 'Técnica',
 
@@ -359,7 +359,7 @@ export const es = {
   'guide.step1': 'Soltá, pegá o elegí una imagen. Cada imagen es una capa.',
   'guide.step2': 'Elegí una técnica abajo: xilografía, buril, risografía…',
   'guide.step3': 'Ajustá el efecto, las tintas y el papel.',
-  'guide.step4': 'Exportá un PNG con papel o transparente.',
+  'guide.step4': 'Exportá un PNG con papel o transparente, las separaciones o un PDF de imprenta.',
   'guide.close': 'LISTO',
 
   // Export

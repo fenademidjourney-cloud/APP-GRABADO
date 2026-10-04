@@ -7,6 +7,7 @@
 import type { Doc, Universal } from '../model/doc'
 import { ENGINE_PARAMS, engineOf, variantsOf, type Range } from './defs'
 import { streamRng } from '../util/seed'
+import { IMPERFECTIONS } from '../print/imperfections'
 import type { Params } from '../engines/types'
 
 const pickRange = (r: () => number, [lo, hi]: Range, step = 1) => {
@@ -36,7 +37,8 @@ export function rollVariant(d: Doc, seed: number): { doc: Doc; index: number } {
     }
   }
   const imperfections = {
-    enabled: style.imperfections ?? d.imperfections.enabled,
+    // Canonical order (as the sanitiser keeps it), whatever order the style lists them in.
+    enabled: style.imperfections ? IMPERFECTIONS.filter((id) => style.imperfections!.includes(id)) : d.imperfections.enabled,
     amount: style.impAmount ? pickRange(r, style.impAmount) : d.imperfections.amount,
   }
   return { doc: { ...d, universal, params, imperfections, seed, variant: index }, index }

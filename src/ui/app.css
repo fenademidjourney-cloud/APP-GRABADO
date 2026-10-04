@@ -25,6 +25,8 @@
 .seed-row .chips { flex: none; }
 .chips button:disabled { opacity: .3; cursor: default; }
 .selector:disabled { opacity: .3; cursor: default; }
+/* Long process names (HUECOGRABADO, PLANOGRAFÍA) must not run under the chevron. */
+.selector-name small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Ink chips: which ink the colour swatches apply to. */
 .ink-chips { margin: 2px 0 6px; }
