@@ -63,10 +63,10 @@ export interface ExportJob {
   dpi: number              // written into the file (pHYs)
   transparent: boolean     // only the ink, no paper
   tileSize: number         // smaller on phones
-  /** png: the print · separations: a ZIP with one grey film per ink plus the print. */
-  kind: 'png' | 'separations'
-  /** File names inside the ZIP (separations): one per ink, then the print. */
-  names?: { inks: string[]; print: string }
+  /** png: the print · separations: a ZIP with one grey film per ink plus the print · pdf: one /Separation per ink. */
+  kind: 'png' | 'separations' | 'pdf'
+  /** File names inside the ZIP (separations), ink names and title for the PDF. */
+  names?: { inks: string[]; print: string; inkNames?: string[]; title?: string }
 }
 
 export type ToRenderer =

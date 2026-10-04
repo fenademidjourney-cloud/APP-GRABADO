@@ -314,6 +314,27 @@ export const PRESETS: Record<string, PresetDef> = {
       { nameKey: 'variant.newsLine', params: { shape: ['line'], lpi: [40, 60], angle: [30, 60] }, universal: { pressure: [45, 65], roughness: [20, 40] }, imperfections: ['pressure', 'dust'], impAmount: [25, 45] },
     ],
   },
+  // Four-colour offset: process inks, each screened at its classic angle
+  // (C 15° · M 75° · Y 0° · K 45°) so the dots form rosettes instead of moiré.
+  'offset-cmyk': {
+    engine: 'screen',
+    impression: 'offset',
+    params: { shape: 'round', lpi: 150, angle: 45, moire: 0, gain: 12, softness: 5, fmDot: 90 },
+    universal: { contrast: 5, ink: 100, detail: 60, pressure: 50, roughness: 6, grain: 12, registration: 8 },
+    inkMode: 'many',
+    inks: ['#00a3e0', '#e5007e', '#ffed00', '#1d1d1b'],
+    inkOpacity: [0, 0, 0, 0],
+    paper: { id: 'white', texture: 25, light: 10 },
+    essentials: ['lpi', 'detail', 'ink', 'registration', 'contrast'],
+    advanced: ['shape', 'angle', 'moire', 'gain', 'softness', 'pressure', 'roughness', 'grain', 'fmDot'],
+    imperfections: { amount: 15, enabled: ['dust'] },
+    variants: [
+      { nameKey: 'variant.cmykMagazine', params: { shape: ['round', 'ellipse'], lpi: [150, 175], gain: [8, 15] }, universal: { registration: [0, 10] }, imperfections: ['dust'], impAmount: [5, 15] },
+      { nameKey: 'variant.cmykComic', params: { shape: ['round'], lpi: [45, 65], gain: [25, 45] }, universal: { registration: [35, 65], roughness: [20, 40] }, imperfections: ['pressure', 'dust'], impAmount: [25, 45] },
+      { nameKey: 'variant.cmykMoire', params: { moire: [45, 80], lpi: [60, 90] }, universal: { registration: [10, 30] }, imperfections: ['dust'], impAmount: [10, 25] },
+      { nameKey: 'variant.cmykFm', params: { shape: ['fm'], fmDot: [60, 110] }, universal: { registration: [0, 15] }, imperfections: ['dust'], impAmount: [5, 15] },
+    ],
+  },
   // Magazine / book reproduction: fine chain (elliptical) dots, little gain, smooth paper.
   'editorial-halftone': {
     engine: 'screen',

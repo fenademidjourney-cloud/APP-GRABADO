@@ -368,7 +368,9 @@ export default function App() {
   // (works on file:// too); sharing hands the same file to the system share sheet.
   const fileName = (blob: Blob, w: number, h: number, kind: ExportKind = 'png') => kind === 'separations'
     ? new File([blob], `taller-de-grabado-${doc.technique}-${w}x${h}-separaciones.zip`, { type: 'application/zip' })
-    : new File([blob], `taller-de-grabado-${doc.technique}-${w}x${h}.png`, { type: 'image/png' })
+    : kind === 'pdf'
+      ? new File([blob], `taller-de-grabado-${doc.technique}-imprenta.pdf`, { type: 'application/pdf' })
+      : new File([blob], `taller-de-grabado-${doc.technique}-${w}x${h}.png`, { type: 'image/png' })
   const lastSize = useRef({ w: 0, h: 0 })
   const startExport = (o: { dpi: number; widthPx: number; heightPx: number; kind: ExportKind }, onProgress: (p: number) => void) => {
     lastSize.current = { w: o.widthPx, h: o.heightPx }
@@ -377,6 +379,8 @@ export default function App() {
     const names = {
       inks: doc.inks.map((hex, i) => `${tf('sep.ink', { n: i + 1 })}-${slug(INK_LIBRARY.find((c) => c.hex === hex)?.name ?? hex.slice(1))}.png`),
       print: `${t('sep.print')}.png`,
+      inkNames: doc.inks.map((hex, i) => INK_LIBRARY.find((c) => c.hex === hex)?.name ?? `${tf('layers.inkName', { n: i + 1 })} ${hex.toUpperCase()}`),
+      title: `TALLER DE GRABADO · ${technique.name}`,
     }
     return exporterRef.current?.(
       { ...o, names, transparent: !doc.toggles.paper, tileSize: isCoarsePointer() ? 1024 : 2048 },
@@ -394,7 +398,7 @@ export default function App() {
     a.remove()
     window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
     setOverlay('none')
-    showNotice(t(kind === 'separations' ? 'notice.exportedZip' : 'notice.exported'))
+    showNotice(t(kind === 'separations' ? 'notice.exportedZip' : kind === 'pdf' ? 'notice.exportedPdf' : 'notice.exported'))
   }
   const share = async (blob: Blob) => {
     const file = fileName(blob, lastSize.current.w, lastSize.current.h)

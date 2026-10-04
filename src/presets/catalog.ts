@@ -34,7 +34,7 @@ export const CATALOG: TechniqueEntry[] = [
   { id: 'editorial-halftone', name: 'Trama editorial', originalName: 'Editorial Halftone', nav: 'editorial', process: 'photomechanical', mvp: true },
   { id: 'photomechanical-halftone', name: 'Trama fotomecánica', originalName: 'Photomechanical Halftone', nav: 'editorial', process: 'photomechanical', mvp: false },
   { id: 'high-contrast', name: 'Alto contraste', originalName: 'High-contrast Reproduction', nav: 'editorial', process: 'photomechanical', mvp: false },
-  { id: 'offset-cmyk', name: 'Offset CMYK', originalName: 'Offset-inspired Halftone', nav: 'editorial', process: 'planographic', mvp: false },
+  { id: 'offset-cmyk', name: 'Offset CMYK', originalName: 'Offset-inspired Halftone', nav: 'editorial', process: 'planographic', mvp: true },
 
   { id: 'screenprint', name: 'Serigrafía', originalName: 'Screenprint', nav: 'pop', process: 'stencil', mvp: true },
   { id: 'pop-screenprint', name: 'Serigrafía pop', originalName: 'Pop Screenprint', nav: 'pop', process: 'stencil', mvp: true },

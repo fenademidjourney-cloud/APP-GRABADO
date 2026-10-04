@@ -22,6 +22,7 @@ import { layerQuad } from '../model/layer'
 import { inkAbsorbance } from '../print/ink'
 import { PngStreamWriter } from '../io/export/pngStream'
 import { zip } from '../io/export/zip'
+import { DeflateRowWriter, separationPdf } from '../io/export/pdf'
 import { voidAndCluster } from '../analysis/bluenoise'
 import { createProgram, parseHex, type GL, type Program } from './gl/gl'
 import { BLUR_FS, COMPOSITE_FS, LAYER_FS, LAYER_VS, LINE_FS, LINE_VS, QUAD_VS, SHADOW_FS, TONE_FS } from './shaders'
@@ -792,14 +793,14 @@ export class Renderer {
     const tile = new Uint8Array(TS * TS * 4)
     const cols = Math.ceil(W / TS)
     const rows = Math.ceil(H / TS)
-    const films = job.kind === 'separations' ? inkCount : 0
-    const total = cols * rows * (films + 1)
+    const films = job.kind === 'png' ? 0 : inkCount
+    const total = cols * rows * (films + (job.kind === 'pdf' ? 0 : 1))
     let done = 0
 
     /** One image of the sheet: the print (sepInk −1) or one ink's film (grey). */
-    const image = async (sepInk: number): Promise<Blob> => {
+    const image = async (sepInk: number, raw = false): Promise<Blob> => {
       const channels = sepInk >= 0 ? 1 : job.transparent ? 4 : 3
-      const png = new PngStreamWriter(W, H, channels, job.dpi)
+      const png = raw ? new DeflateRowWriter(W, H, channels) : new PngStreamWriter(W, H, channels, job.dpi)
       try {
         for (let ty = 0; ty < rows; ty++) {
           const y0 = ty * TS
@@ -843,7 +844,14 @@ export class Renderer {
     }
 
     try {
-      if (job.kind !== 'separations') return await image(-1)
+      if (job.kind === 'png') return await image(-1)
+      if (job.kind === 'pdf') {
+        const inks = []
+        for (let i = 0; i < films; i++) {
+          inks.push({ name: job.names?.inkNames?.[i] ?? `Tinta ${i + 1}`, rgb: parseHex(print.inks[i]), film: await image(i, true) })
+        }
+        return separationPdf({ widthMm: scene.sheet.widthMm, heightMm: scene.sheet.heightMm, widthPx: W, heightPx: H, title: job.names?.title ?? 'TALLER DE GRABADO', inks })
+      }
       const entries = []
       for (let i = 0; i < films; i++) {
         entries.push({ name: job.names?.inks[i] ?? `ink-${i + 1}.png`, data: new Uint8Array(await (await image(i)).arrayBuffer()) })

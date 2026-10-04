@@ -10,9 +10,9 @@ import type { ExportHandle } from '../render/renderHost'
 // dark button per panel). The PNG is rendered tile by tile at the final resolution,
 // never upscaled from the preview.
 
-export type ExportKind = 'png' | 'separations'
+export type ExportKind = 'png' | 'separations' | 'pdf'
 
-export type Exporter = (o: { widthPx: number; heightPx: number; dpi: number; transparent: boolean; tileSize: number; kind: ExportKind; names?: { inks: string[]; print: string } }, onProgress: (done: number, total: number) => void) => ExportHandle | null
+export type Exporter = (o: { widthPx: number; heightPx: number; dpi: number; transparent: boolean; tileSize: number; kind: ExportKind; names?: { inks: string[]; print: string; inkNames?: string[]; title?: string } }, onProgress: (done: number, total: number) => void) => ExportHandle | null
 
 export function isCoarsePointer(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
@@ -90,18 +90,18 @@ export function ExportSheet({ mode, sheet, paperOn, scale, customDpi, unit, onPa
               <Segmented
                 value={kind}
                 onChange={setKind}
-                options={[{ value: 'png', label: t('export.formatPng') }, { value: 'separations', label: t('export.formatSeps') }]}
+                options={[{ value: 'png', label: t('export.formatPng') }, { value: 'separations', label: t('export.formatSeps') }, { value: 'pdf', label: t('export.formatPdf') }]}
               />
-              <p className="sheet-note">{t(kind === 'separations' ? 'export.sepsNote' : 'export.pngNote')}</p>
+              <p className="sheet-note">{t(kind === 'separations' ? 'export.sepsNote' : kind === 'pdf' ? 'export.pdfNote' : 'export.pngNote')}</p>
             </>
           )}
-          <Label>{t('export.background')}</Label>
+          {kind !== 'pdf' && <><Label>{t('export.background')}</Label>
           <Segmented
             value={paperOn ? 'paper' : 'transparent'}
             onChange={(v) => onPaper(v === 'paper')}
             options={[{ value: 'paper', label: t('export.withPaper') }, { value: 'transparent', label: t('export.transparent') }]}
           />
-          <p className="sheet-note">{paperOn ? t('export.bgNoteWith') : t('export.bgNoteTransparent')}</p>
+          <p className="sheet-note">{paperOn ? t('export.bgNoteWith') : t('export.bgNoteTransparent')}</p></>}
 
           <Label>{t('export.size')}</Label>
           <div className="chips" role="group" aria-label={t('export.size')}>
@@ -144,7 +144,7 @@ export function ExportSheet({ mode, sheet, paperOn, scale, customDpi, unit, onPa
         {ready ? (
           <button type="button" className="wide-btn dark" onClick={() => onShare(ready)}>{t('export.share')}</button>
         ) : progress === null ? (
-          <button type="button" className="wide-btn dark" onClick={go}>{mode === 'share' ? t('export.prepareShare') : kind === 'separations' ? t('export.goSeps') : t('export.go')}</button>
+          <button type="button" className="wide-btn dark" onClick={go}>{mode === 'share' ? t('export.prepareShare') : kind === 'separations' ? t('export.goSeps') : kind === 'pdf' ? t('export.goPdf') : t('export.go')}</button>
         ) : (
           <div className="export-progress" role="status" aria-live="polite">
             <span className="ring" style={{ '--p': `${Math.round(progress * 100)}%` } as React.CSSProperties} aria-hidden="true" />

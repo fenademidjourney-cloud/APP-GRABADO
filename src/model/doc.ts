@@ -77,6 +77,9 @@ export const INK_LIBRARY: Array<{ id: string; name: string; hex: string; light?:
   { id: 'federal-blue', name: 'Azul federal', hex: '#2e3f8f' },
   { id: 'violet', name: 'Violeta', hex: '#765ba7' },
   { id: 'burgundy', name: 'Burdeos', hex: '#914e72' },
+  { id: 'process-cyan', name: 'Cian de proceso', hex: '#00a3e0' },
+  { id: 'process-magenta', name: 'Magenta de proceso', hex: '#e5007e' },
+  { id: 'process-yellow', name: 'Amarillo de proceso', hex: '#ffed00', light: true },
 ]
 
 const DEFAULT_INKS: Record<InkMode, string[]> = {
