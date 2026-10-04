@@ -19,6 +19,7 @@ import { IMPRESSION, impressionModelOf } from '../print/impression'
 import { newSeed } from '../util/seed'
 import { resolveScreen } from '../engines/screen/params'
 import { resolveStencil } from '../engines/stencil/params'
+import { resolveRelief } from '../engines/relief/params'
 import type { ParamValue } from '../engines/types'
 import type { PrintScene } from '../render/scene'
 import { duplicateLayer, reorder, updateLayer } from '../model/layerOps'
@@ -192,7 +193,8 @@ export default function App() {
         grain: u.grain / 100,
         // Ink wicks along the fibres: more with absorbent paper, a full film and pressure.
         bleedMm: doc.toggles.paper ? 0.12 * model.bleed * paper.absorb * Math.min(1.5, u.ink / 100) * (0.5 + u.pressure / 100) : 0,
-        contact: model.contact,
+        // A deep impression drives the plate into the valleys of the paper.
+        contact: model.contact * (engine === 'relief' ? 1 - 0.8 * (Number(doc.params.deboss) || 0) / 100 : 1),
         depletion: model.depletion,
         bandsAcross: model.bandsAcross,
       },
@@ -203,6 +205,7 @@ export default function App() {
       paper: { color: paper.color, fibre: paper.fibre, flocs: paper.flocs, texture: doc.paper.texture / 100, relief: paper.relief, light: doc.paper.light / 100 },
       screen: engine === 'screen' ? resolveScreen(doc.params, u, doc.inks.length) : stencil?.screen,
       stencil: stencil?.stencil,
+      relief: engine === 'relief' ? resolveRelief(doc.params, u) : undefined,
     }
   }, [doc.inks, doc.universal, doc.toggles, doc.paper, doc.technique, doc.params, doc.seed, doc.imperfections])
   const [screenLod, setScreenLod] = useState(false)

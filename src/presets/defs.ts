@@ -6,6 +6,7 @@ import type { EngineId, ParamDef, Params } from '../engines/types'
 import { defaultsOf } from '../engines/types'
 import { SCREEN_PARAMS } from '../engines/screen/params'
 import { STENCIL_PARAMS } from '../engines/stencil/params'
+import { RELIEF_PARAMS } from '../engines/relief/params'
 import type { InkMode, PaperSettings, Universal } from '../model/doc'
 import type { ImperfectionId, ImperfectionSettings } from '../print/imperfections'
 import type { TextKey } from '../i18n'
@@ -49,12 +50,97 @@ export const ENGINE_PARAMS: Record<EngineId, ParamDef[]> = {
   none: [],
   screen: SCREEN_PARAMS,
   stencil: STENCIL_PARAMS,
+  relief: RELIEF_PARAMS,
 }
+
+const RELIEF_ADVANCED = ['surface', 'woodGrain', 'grainAngle', 'splinter', 'printing', 'squash', 'deboss', 'pieces', 'roughness', 'grain', 'registration']
 
 const RISO_ADVANCED = ['fill', 'levels', 'angle', 'gain', 'maxDensity', 'masterDpi', 'pressure', 'roughness', 'grain', 'filmGrain']
 const SCREEN_ADVANCED = ['fill', 'levels', 'lpi', 'angle', 'gain', 'mesh', 'pressure', 'roughness', 'grain', 'filmGrain', 'fmDot']
 
 export const PRESETS: Record<string, PresetDef> = {
+  // Woodcut: plank wood cut with knife and gouges, printed by rubbing a baren: strong
+  // masses, grain in the solids, edges that splinter along the grain.
+  woodcut: {
+    engine: 'relief',
+    impression: 'relief',
+    params: { threshold: 50, surface: 'wood', woodGrain: 55, grainAngle: 90, splinter: 45, printing: 'baren', squash: 10, deboss: 15, pieces: 0 },
+    universal: { contrast: 20, ink: 100, detail: 45, pressure: 50, roughness: 35, grain: 45, registration: 25 },
+    inkMode: 'one',
+    inks: ['#1d1d1b'],
+    inkOpacity: [0],
+    paper: { id: 'ivory', texture: 70, light: 30 },
+    essentials: ['threshold', 'detail', 'ink', 'pressure', 'contrast'],
+    advanced: RELIEF_ADVANCED,
+    imperfections: { amount: 35, enabled: ['pressure', 'starved', 'dust'] },
+    variants: [
+      { nameKey: 'variant.woodBold', params: { threshold: [40, 55], woodGrain: [40, 60], splinter: [35, 60], printing: ['baren'] }, universal: { detail: [25, 45], roughness: [30, 50], contrast: [15, 35] }, imperfections: ['pressure', 'starved', 'dust'], impAmount: [30, 50] },
+      { nameKey: 'variant.woodGrainy', params: { woodGrain: [70, 95], grainAngle: [80, 100], splinter: [40, 70] }, universal: { detail: [40, 60], grain: [50, 75] }, imperfections: ['pressure', 'starved'], impAmount: [30, 50] },
+      { nameKey: 'variant.woodPress', params: { printing: ['press'], woodGrain: [25, 45], splinter: [20, 40] }, universal: { detail: [50, 70], roughness: [15, 30] }, imperfections: ['pressure', 'dust'], impAmount: [15, 30] },
+      { nameKey: 'variant.woodWorn', params: { woodGrain: [50, 80], splinter: [55, 85], printing: ['baren'] }, universal: { ink: [75, 95], pressure: [30, 45], grain: [60, 85] }, imperfections: ['pressure', 'starved', 'dust', 'wear'], impAmount: [50, 75] },
+    ],
+  },
+  // Linocut: isotropic linoleum, soft curves, clean edges and a fine mottle in the solids.
+  linocut: {
+    engine: 'relief',
+    impression: 'relief',
+    params: { threshold: 50, surface: 'lino', woodGrain: 0, grainAngle: 90, splinter: 8, printing: 'press', squash: 15, deboss: 20, pieces: 0 },
+    universal: { contrast: 15, ink: 100, detail: 55, pressure: 50, roughness: 15, grain: 40, registration: 25 },
+    inkMode: 'one',
+    inks: ['#1d1d1b'],
+    inkOpacity: [0],
+    paper: { id: 'cream', texture: 60, light: 25 },
+    essentials: ['threshold', 'detail', 'ink', 'pressure', 'contrast'],
+    advanced: RELIEF_ADVANCED,
+    imperfections: { amount: 30, enabled: ['pressure', 'starved', 'dust'] },
+    variants: [
+      { nameKey: 'variant.linoClean', params: { threshold: [45, 55], splinter: [0, 10], printing: ['press'] }, universal: { detail: [55, 75], roughness: [5, 15] }, imperfections: ['pressure', 'dust'], impAmount: [10, 25] },
+      { nameKey: 'variant.linoBold', params: { threshold: [38, 50] }, universal: { detail: [25, 45], contrast: [20, 40] }, imperfections: ['pressure', 'starved', 'dust'], impAmount: [25, 45] },
+      { nameKey: 'variant.linoBaren', params: { printing: ['baren'], splinter: [5, 20] }, universal: { detail: [45, 65], pressure: [35, 50], grain: [50, 70] }, imperfections: ['pressure', 'starved'], impAmount: [30, 50] },
+      { nameKey: 'variant.linoHeavy', params: { squash: [25, 45] }, universal: { ink: [120, 145], pressure: [65, 85] }, imperfections: ['pressure', 'dust'], impAmount: [20, 35] },
+    ],
+  },
+  // Letterpress today: crisp photopolymer plates driven deep into thick cotton paper.
+  letterpress: {
+    engine: 'relief',
+    impression: 'relief',
+    params: { threshold: 50, surface: 'polymer', woodGrain: 0, grainAngle: 90, splinter: 0, printing: 'press', squash: 25, deboss: 75, pieces: 0 },
+    universal: { contrast: 10, ink: 100, detail: 92, pressure: 60, roughness: 5, grain: 25, registration: 15 },
+    inkMode: 'one',
+    inks: ['#2e3f8f'],
+    inkOpacity: [0],
+    paper: { id: 'cotton', texture: 85, light: 55 },
+    essentials: ['threshold', 'detail', 'ink', 'pressure', 'contrast'],
+    advanced: RELIEF_ADVANCED,
+    imperfections: { amount: 15, enabled: ['dust'] },
+    variants: [
+      { nameKey: 'variant.lpDeep', params: { deboss: [75, 100], squash: [20, 35] }, universal: { pressure: [60, 80] }, imperfections: ['dust'], impAmount: [5, 20] },
+      { nameKey: 'variant.lpKiss', params: { deboss: [5, 20], squash: [15, 30] }, universal: { pressure: [40, 55] }, imperfections: ['dust'], impAmount: [5, 20] },
+      { nameKey: 'variant.lpBlind', params: { deboss: [85, 100], squash: [0, 10] }, universal: { ink: [15, 35], pressure: [70, 90] }, imperfections: [], impAmount: [0, 10] },
+      { nameKey: 'variant.lpHeavy', params: { deboss: [50, 75], squash: [35, 55] }, universal: { ink: [115, 140], pressure: [60, 80], grain: [35, 55] }, imperfections: ['dust', 'pressure'], impAmount: [15, 30] },
+    ],
+  },
+  // Movable type: every piece is its own block — heights, inking and wear vary piece
+  // by piece; a kiss impression, a darker rim of squashed ink.
+  'movable-type': {
+    engine: 'relief',
+    impression: 'relief',
+    params: { threshold: 50, surface: 'metal', woodGrain: 0, grainAngle: 0, splinter: 0, printing: 'press', squash: 40, deboss: 15, pieces: 70 },
+    universal: { contrast: 15, ink: 100, detail: 90, pressure: 50, roughness: 20, grain: 45, registration: 20 },
+    inkMode: 'one',
+    inks: ['#1d1d1b'],
+    inkOpacity: [0],
+    paper: { id: 'ivory', texture: 70, light: 30 },
+    essentials: ['pieces', 'detail', 'ink', 'pressure', 'contrast'],
+    advanced: ['threshold', ...RELIEF_ADVANCED.filter((p) => p !== 'pieces')],
+    imperfections: { amount: 40, enabled: ['pressure', 'starved', 'dust', 'wear'] },
+    variants: [
+      { nameKey: 'variant.typeMetal', params: { surface: ['metal'], pieces: [55, 80], squash: [30, 50] }, universal: { grain: [35, 55] }, imperfections: ['pressure', 'starved', 'dust', 'wear'], impAmount: [30, 50] },
+      { nameKey: 'variant.typeWood', params: { surface: ['wood'], woodGrain: [45, 75], grainAngle: [0, 10], pieces: [60, 90], squash: [20, 35] }, universal: { grain: [50, 70] }, imperfections: ['pressure', 'starved', 'dust', 'wear'], impAmount: [40, 60] },
+      { nameKey: 'variant.typeWorn', params: { pieces: [85, 100], squash: [40, 60] }, universal: { ink: [80, 95], pressure: [35, 50], roughness: [35, 55] }, imperfections: ['pressure', 'starved', 'dust', 'wear'], impAmount: [55, 80] },
+      { nameKey: 'variant.typeFresh', params: { pieces: [25, 45], squash: [25, 40] }, universal: { ink: [100, 115], roughness: [5, 15] }, imperfections: ['dust'], impAmount: [10, 25] },
+    ],
+  },
   // Risograph: soy ink through a master burnt at 600 dpi; dots built on the master's
   // grid, solids that never reach a full film, passes that drift up to a couple of mm.
   risograph: {

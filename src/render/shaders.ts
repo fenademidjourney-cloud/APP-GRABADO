@@ -48,8 +48,39 @@ uniform float uOpacity;
 uniform int uBlend;     // 0 normal · 1 multiply · 2 screen · 3 darken · 4 lighten
 uniform bool uGray;     // plates: the layer as a grey positive (film for one ink)
 out vec4 outColor;
+
+// Catmull-Rom from 9 bilinear taps (docs/PLANNING.md §D.2): enlarged sources stay
+// smooth, so a threshold over them gives curves instead of bilinear stair-steps.
+vec4 catmullRom(vec2 uv) {
+  vec2 size = vec2(textureSize(uTex, 0));
+  vec2 p = uv * size;
+  vec2 t1 = floor(p - 0.5) + 0.5;
+  vec2 f = p - t1;
+  vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+  vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+  vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+  vec2 w3 = f * f * (-0.5 + 0.5 * f);
+  vec2 w12 = w1 + w2;
+  vec2 t0 = (t1 - 1.0) / size;
+  vec2 t3 = (t1 + 2.0) / size;
+  vec2 t12 = (t1 + w2 / w12) / size;
+  vec4 r = textureLod(uTex, vec2(t0.x, t0.y), 0.0) * w0.x * w0.y
+         + textureLod(uTex, vec2(t12.x, t0.y), 0.0) * w12.x * w0.y
+         + textureLod(uTex, vec2(t3.x, t0.y), 0.0) * w3.x * w0.y
+         + textureLod(uTex, vec2(t0.x, t12.y), 0.0) * w0.x * w12.y
+         + textureLod(uTex, vec2(t12.x, t12.y), 0.0) * w12.x * w12.y
+         + textureLod(uTex, vec2(t3.x, t12.y), 0.0) * w3.x * w12.y
+         + textureLod(uTex, vec2(t0.x, t3.y), 0.0) * w0.x * w3.y
+         + textureLod(uTex, vec2(t12.x, t3.y), 0.0) * w12.x * w3.y
+         + textureLod(uTex, vec2(t3.x, t3.y), 0.0) * w3.x * w3.y;
+  r = clamp(r, 0.0, 1.0);
+  return vec4(min(r.rgb, r.a), r.a);   // stays premultiplied
+}
+
 void main() {
-  vec4 c = texture(uTex, vUv) * uOpacity;   // premultiplied sRGB
+  // Enlarged (a texel covers more than a pixel): bicubic. Reduced: the mipmaps.
+  vec2 texels = fwidth(vUv * vec2(textureSize(uTex, 0)));
+  vec4 c = (max(texels.x, texels.y) < 1.0 ? catmullRom(vUv) : texture(uTex, vUv)) * uOpacity;   // premultiplied sRGB
   if (uGray) c.rgb = vec3(dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)));
   // Darken / lighten use MIN / MAX blending: composite over white (darken) so
   // transparent pixels leave what is below untouched.
@@ -229,7 +260,20 @@ uniform float uFilmGrain;     // 0..1
 uniform float uGridMm;        // master dots / mesh openings (0 = none)
 uniform float uGridAngle;     // radians
 uniform float uMaxDensity;    // 0..1
-// Technique engine (docs/PLANNING.md §C.2). 0 = continuous ink, 1 = screen, 2 = stencil.
+// Relief engine (engines/relief/params.ts).
+uniform float uRelThreshold;
+uniform int uRelSurface;      // 0 wood · 1 lino · 2 metal · 3 polymer
+uniform float uRelGrain;      // wood grain lines 0..1
+uniform float uRelGrainAngle; // radians
+uniform float uRelSplinter;   // mm
+uniform bool uRelBaren;
+uniform float uRelSquash;
+uniform float uRelDeboss;
+uniform float uRelPieces;
+uniform float uRelGrow;       // mm
+uniform float uRelRough;      // mm
+uniform sampler2D uPieces;    // analysis/components.ts: piece id (rgb) per analysis pixel
+// Technique engine (docs/PLANNING.md §C.2). 0 = continuous ink, 1 = screen, 2 = stencil, 3 = relief.
 uniform int uEngine;
 uniform bool uFM;             // stochastic screen instead of AM dots
 uniform int uShape;           // engines/screen/spot.ts · SHAPE_INDEX
@@ -464,6 +508,101 @@ float stencilTone(int k, vec2 pm, float aa) {
 }
 float plateTone(int k, vec2 pm, float aa) { return uEngine == 2 ? stencilTone(k, pm, aa) : toneAt(k, uvOfMm(pm)); }
 
+// ---- Relief -------------------------------------------------------------------
+// The piece of type a point belongs to (x, y, z random per piece, w = 1 on a piece).
+vec4 pieceAt(vec2 mm) {
+  if (uRelPieces <= 0.0) return vec4(0.5, 0.5, 0.5, 0.0);
+  vec4 c = texture(uPieces, anUv(mm));
+  if (c.a < 0.5) return vec4(0.5, 0.5, 0.5, 0.0);
+  uvec3 id = uvec3(c.rgb * 255.0 + 0.5);
+  return vec4(vec3(pcg3d(uvec3(id.r | (id.g << 8u) | (id.b << 16u), sScreen, 0x7071u))) / 4294967295.0, 1.0);
+}
+
+// Wood grain: long lines along the grain, warped by the growth rings, that hold less
+// ink. x = how much a point lacks ink (0..1), y = the fibrous mottle beside them.
+vec2 woodGrain(vec2 pm) {
+  mat2 R = rot(-uRelGrainAngle);
+  vec2 g = R * pm;   // x along the grain, y across it
+  // Growth rings cut lengthwise: wavy, unevenly spaced, each ring a soft band of
+  // early wood ending in a sharp line of late wood.
+  // Gentle warps: rings of a plank cut lengthwise stay roughly parallel (big warps close into whorls).
+  float warp = vnoise(g * vec2(0.012, 0.02), sScreen ^ 301u) * 5.0 + vnoise(g * vec2(0.05, 0.12), sScreen ^ 302u) * 1.2
+             + vnoise(g * vec2(0.3, 1.5), sScreen ^ 305u) * 0.3;
+  float y = g.y + warp;
+  float s = y / 1.8;
+  float ring = fract(s);
+  float id = floor(s);
+  float late = smoothstep(0.78, 0.9, ring) * (1.0 - smoothstep(0.93, 1.0, ring));
+  // Each line holds ink unevenly along its length; some fade out.
+  late *= smoothstep(0.25, 0.7, vnoise(vec2(g.x * 0.25, id * 3.7), sScreen ^ 303u));
+  float early = (0.5 - 0.5 * cos(ring * 6.2832)) * smoothstep(4.0, 9.0, 1.8 * uPxPerMm);
+  float widthPx = 0.2 * uPxPerMm;
+  late = mix(0.12, late, smoothstep(0.7, 2.0, widthPx));  // zoomed out: the average
+  float fibres = vnoise(g * vec2(0.35, 7.0), sScreen ^ 304u) - 0.5;
+  return vec2(late + 0.25 * early, fibres);
+}
+
+float reliefTone(int k, vec2 pm) { return uSimplify ? smoothToneAt(k, pm) : toneAt(k, uvOfMm(pm)); }
+
+// Relief matrix of ink k (docs/PLANNING.md §C.1): x = area covered, y = film, z = film for separations.
+vec3 reliefPlate(int k, vec2 pm, float growMm) {
+  vec4 piece = pieceAt(pm);
+  // Movable type: each piece sits a little off the baseline.
+  vec2 pq = pm + (piece.xy - 0.5) * uRelPieces * 0.14 * piece.w;
+  float T = reliefTone(k, pq);
+  // φ in mm: the tone's distance to the cut, divided by how fast the tone changes.
+  // The slope comes from central differences in mm (fwidth works per 2 × 2 pixels and
+  // shows as steps once the edge is moved by wear or ink).
+  float e = max(1.0 / uPxPerMm, 0.04);
+  vec2 grad = vec2(reliefTone(k, pq + vec2(e, 0.0)) - reliefTone(k, pq - vec2(e, 0.0)),
+                   reliefTone(k, pq + vec2(0.0, e)) - reliefTone(k, pq - vec2(0.0, e))) / (2.0 * e);
+  float slope = max(length(grad), 1e-4);
+  float phi = (uRelThreshold - T) / slope;
+  phi = clamp(phi, -50.0, 50.0);
+  phi -= uRelGrow + growMm;
+  phi += (vnoise(rot(0.5) * pm / 0.09, sScreen ^ 311u) - 0.5) * uRelRough * 2.0;
+  // Splinters: the edge breaks along the grain (long thin flakes).
+  if (uRelSplinter > 0.0) {
+    vec2 g = rot(-uRelGrainAngle) * pm;
+    float flake = vnoise(g * vec2(0.3, 4.5), sScreen ^ 312u) * 0.7 + vnoise(g * vec2(1.2, 14.0), sScreen ^ 313u) * 0.3;
+    phi += max(flake - 0.45, 0.0) * 2.5 * uRelSplinter;
+  }
+  // Worn or broken pieces lose their edges in bites.
+  // (The noise lattice is turned so its cells don't line up with the letters' stems.)
+  if (piece.w > 0.0 && piece.z < 0.3 * uRelPieces) phi += (vnoise(rot(0.7) * pm / 0.45, sScreen ^ 314u) * 0.6 + vnoise(rot(-0.4) * pm / 0.15, sScreen ^ 315u) * 0.4) * 0.3;
+  float cov = clamp(0.5 - phi * uPxPerMm, 0.0, 1.0);
+
+  float film = 1.0;
+  // Squash: the ink is pushed to the edge of each mark — darker rim, lighter middle.
+  if (uRelSquash > 0.0) film *= 1.0 + uRelSquash * (0.45 * exp(-abs(phi) / 0.06) - 0.18 * smoothstep(0.05, 0.4, -phi));
+  if (uRelSurface == 0 && uRelGrain > 0.0) {
+    vec2 wg = woodGrain(pm);
+    film *= 1.0 - uRelGrain * (0.6 * wg.x + 0.35 * wg.y);
+  } else if (uRelSurface == 1) {
+    film *= 1.0 + 0.22 * (vnoise(pm / 0.11, sScreen ^ 321u) - 0.5);   // the linoleum's fine mottle
+  }
+  if (uRelBaren) {
+    // A baren rubbed by hand: overlapping strokes, each pressing a little differently.
+    // Strokes bend with the hand: an added warp (turning the coordinates by a varying
+    // angle would curl them into whorls far from the origin).
+    vec2 b = rot(0.6) * pm + vec2(0.0, 8.0 * vnoise(pm / 35.0, sScreen ^ 332u));
+    float stroke = vnoise(b * vec2(0.06, 0.45), sScreen ^ 331u) * 0.7 + vnoise(pm / 9.0, sScreen ^ 333u) * 0.3;
+    film *= 1.0 - 0.22 * smoothstep(0.5, 0.85, stroke);
+  }
+  // Pieces of different height take and give different amounts of ink.
+  film *= mix(1.0, 0.6 + 0.6 * piece.y, uRelPieces * piece.w);
+  return vec3(cov, max(film, 0.0), cov);
+}
+
+// The plate pressed into the paper (deboss), as a height 0..1 from the low-resolution tone.
+float debossAt(vec2 mm) {
+  float t = 0.0;
+  vec2 uv = anUv(mm);
+  vec4 a = bspline(uAnTone0, uv);
+  t = max(max(a.r, a.g), max(a.b, a.a));
+  return smoothstep(uRelThreshold - 0.12, uRelThreshold + 0.12, t);
+}
+
 // Film thickness (fraction of a full film) that looks like a tint of dot % t.
 float filmFor(int k, float t) {
   float tl = max(0.2126 * exp(-uInkA[k].r) + 0.7152 * exp(-uInkA[k].g) + 0.0722 * exp(-uInkA[k].b), 0.002);
@@ -475,6 +614,7 @@ float filmFor(int k, float t) {
 // y = film (fraction of a full film), z = the plate's tone as dot % (separation films).
 // growMm widens the marks (bleed).
 vec3 plate(int k, vec2 pm, float growMm) {
+  if (uEngine == 3) return reliefPlate(k, pm, growMm);
   bool stencil = uEngine == 2;
   bool screened = uEngine == 1 || (stencil && uFill > 0);
   vec2 pq = onGrid(pm);
@@ -651,7 +791,16 @@ void main() {
       float hx = paperField(mm + vec2(e, 0.0), fine).y - pf.y;
       float hy = paperField(mm + vec2(0.0, e), fine).y - pf.y;
       vec2 slope = vec2(hx, hy) / e * uRelief * 0.06;
-      col *= 1.0 - uLight * 1.6 * dot(slope, vec2(0.7, 0.7));
+      // Light from the top left: a surface rising towards +x/+y faces it.
+      col *= 1.0 + uLight * 1.6 * dot(slope, vec2(0.7, 0.7));
+    }
+    // Deboss: the plate pushed the paper down; its walls catch or lose the light.
+    if (uEngine == 3 && uRelDeboss > 0.0 && uColorOn && !uCompare) {
+      float e = max(aaMm, 0.12);
+      float d0 = debossAt(mm);
+      vec2 grad = vec2(debossAt(mm + vec2(e, 0.0)) - d0, debossAt(mm + vec2(0.0, e)) - d0) / e;
+      // The paper height is −d: the near (top-left) wall of a hollow is in shadow, the far one lit.
+      col *= 1.0 - uRelDeboss * (0.25 + uLight) * 0.175 * dot(grad, vec2(0.7, 0.7)) - uRelDeboss * 0.03 * d0;
     }
     outColor = vec4(toSrgb(col), 1.0);
     return;

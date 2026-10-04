@@ -7,6 +7,7 @@ import type { View } from './view'
 import type { ScreenUniforms } from '../engines/screen/params'
 import type { InkRegistration } from '../print/registration'
 import type { StencilUniforms } from '../engines/stencil/params'
+import type { ReliefUniforms } from '../engines/relief/params'
 
 export interface SceneColors {
   card: string      // the canvas card (token --card)
@@ -35,6 +36,7 @@ export interface PrintScene {
   /** The technique engine; absent (or Técnica off) = continuous ink. A stencil with AM or FM fill also sends `screen`. */
   screen?: ScreenUniforms
   stencil?: StencilUniforms
+  relief?: ReliefUniforms
 }
 
 export interface Scene {

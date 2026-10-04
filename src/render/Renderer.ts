@@ -26,6 +26,8 @@ import { voidAndCluster } from '../analysis/bluenoise'
 import { createProgram, parseHex, type GL, type Program } from './gl/gl'
 import { BLUR_FS, COMPOSITE_FS, LAYER_FS, LAYER_VS, QUAD_VS, SHADOW_FS, TONE_FS } from './shaders'
 import { maxDisplacementMm } from '../print/registration'
+import { pieceIds } from '../analysis/components'
+import { SURFACE_INDEX } from '../engines/relief/params'
 import { sheetRect } from './view'
 import type { ExportJob, FromRenderer, PrintScene, Scene, SceneColors, Viewport } from './scene'
 
@@ -55,7 +57,7 @@ interface Target { fb: WebGLFramebuffer; tex: WebGLTexture }
 interface Pair { fb: WebGLFramebuffer; tex: [WebGLTexture, WebGLTexture] }
 type Targets = Record<'all' | 'auto' | 'plates0' | 'plates1', Target> & { tone: Pair }
 /** The whole sheet at analysis resolution: its layers, tone, and the blurred mass. */
-interface Analysis { w: number; h: number; k: number; layers: Targets; blur: Pair; mass: Pair; smooth: Pair; simplify: boolean }
+interface Analysis { w: number; h: number; k: number; layers: Targets; blur: Pair; mass: Pair; smooth: Pair; simplify: boolean; pieces: WebGLTexture }
 interface AssetSource { blob: Blob; natural: { w: number; h: number } }
 type SceneLayer = Scene['layers'][number]
 /** The sheet placed on a W × H target: its top-left corner (sx, sy), size and px per mm. */
@@ -404,7 +406,7 @@ export class Renderer {
     let a = reuse
     if (!a || a.w !== w || a.h !== h) {
       if (a) this.deleteAnalysis(a)
-      a = { w, h, k, layers: this.makeTargets(w, h), blur: this.makePair(w, h), mass: this.makePair(w, h), smooth: this.makePair(w, h), simplify: false }
+      a = { w, h, k, layers: this.makeTargets(w, h), blur: this.makePair(w, h), mass: this.makePair(w, h), smooth: this.makePair(w, h), simplify: false, pieces: this.makeTexture(w, h, this.gl.NEAREST) }
     }
     a.k = k
     const f: Frame = { W: w, H: h, sx: 0, sy: 0, sw: widthMm * k, sh: heightMm * k, k }
@@ -415,12 +417,30 @@ export class Renderer {
     this.blurPass(a.layers.tone, a.blur, f, [tap / w, 0])
     this.blurPass(a.blur, a.mass, f, [0, tap / h])
     // The stencil's simplification: the tone smoothed before the stencil is cut.
-    const sigma = scene.print.stencil?.simplifyMm ?? 0
-    a.simplify = sigma * k >= 0.5
+    const sigma = scene.print.stencil?.simplifyMm ?? scene.print.relief?.simplifyMm ?? 0
+    // Below an analysis pixel the full-resolution tone is sharper than any smoothing.
+    a.simplify = sigma * k >= 1
     if (a.simplify) {
       const st = (sigma * k) / 3
       this.blurPass(a.layers.tone, a.blur, f, [st / w, 0])
       this.blurPass(a.blur, a.smooth, f, [0, st / h])
+    }
+    // Movable type: label the pieces of the cut plate (inks 1–4) on the CPU.
+    const rel = scene.print.relief
+    if (rel && rel.pieces > 0) {
+      const gl = this.gl
+      const src = a.simplify ? a.smooth : a.layers.tone
+      const px = new Uint8Array(w * h * 4)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, src.fb)
+      gl.readBuffer(gl.COLOR_ATTACHMENT0)
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px)
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+      const cut = rel.threshold * 255
+      const inked = new Uint8Array(w * h)
+      for (let i = 0; i < w * h; i++) inked[i] = Math.max(px[i * 4], px[i * 4 + 1], px[i * 4 + 2], px[i * 4 + 3]) > cut ? 1 : 0
+      // readPixels rows run bottom-up, like the texture: labels stay aligned with it.
+      gl.bindTexture(gl.TEXTURE_2D, a.pieces)
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, pieceIds(inked, w, h, 2))
     }
     return a
   }
@@ -428,6 +448,7 @@ export class Renderer {
   private deleteAnalysis(a: Analysis) {
     this.deleteTargets(a.layers)
     this.deleteTargets([a.blur, a.mass, a.smooth])
+    this.gl.deleteTexture(a.pieces)
   }
 
   /** Stage 3: registration, marks, impression, imperfections, ink and paper, into the bound framebuffer. */
@@ -457,7 +478,20 @@ export class Renderer {
     const st = pr.stencil
     gl.uniform1i(cp.uniform('uFill'), st?.fill ?? 0)
     gl.uniform1i(cp.uniform('uLevels'), st?.levels ?? 0)
-    gl.uniform1i(cp.uniform('uSimplify'), st && a.simplify ? 1 : 0)
+    const rel = pr.relief
+    gl.uniform1i(cp.uniform('uSimplify'), (st || rel) && a.simplify ? 1 : 0)
+    gl.uniform1f(cp.uniform('uRelThreshold'), rel?.threshold ?? 0.5)
+    gl.uniform1i(cp.uniform('uRelSurface'), rel?.surface ?? SURFACE_INDEX.metal)
+    gl.uniform1f(cp.uniform('uRelGrain'), rel?.woodGrain ?? 0)
+    gl.uniform1f(cp.uniform('uRelGrainAngle'), ((rel?.grainAngle ?? 0) * Math.PI) / 180)
+    gl.uniform1f(cp.uniform('uRelSplinter'), rel?.splinterMm ?? 0)
+    gl.uniform1i(cp.uniform('uRelBaren'), rel?.baren ? 1 : 0)
+    gl.uniform1f(cp.uniform('uRelSquash'), rel?.squash ?? 0)
+    gl.uniform1f(cp.uniform('uRelDeboss'), rel?.deboss ?? 0)
+    gl.uniform1f(cp.uniform('uRelPieces'), rel?.pieces ?? 0)
+    gl.uniform1f(cp.uniform('uRelGrow'), rel?.growMm ?? 0)
+    gl.uniform1f(cp.uniform('uRelRough'), rel?.roughMm ?? 0)
+    this.bindTex(cp, 10, 'uPieces', a.pieces)
     gl.uniform1f(cp.uniform('uFilmGrain'), st?.filmGrain ?? 0)
     gl.uniform1f(cp.uniform('uGridMm'), st?.gridMm ?? 0)
     gl.uniform1f(cp.uniform('uGridAngle'), ((st?.gridAngle ?? 0) * Math.PI) / 180)
@@ -494,7 +528,7 @@ export class Renderer {
     gl.uniform2f(cp.uniform('uSheetMm'), sheet.widthMm, sheet.heightMm)
     gl.uniform1f(cp.uniform('uPxPerMm'), f.k)
     const sc = pr.screen
-    gl.uniform1i(cp.uniform('uEngine'), st ? 2 : sc ? 1 : 0)
+    gl.uniform1i(cp.uniform('uEngine'), rel ? 3 : st ? 2 : sc ? 1 : 0)
     if (sc) {
       gl.uniform1i(cp.uniform('uFM'), sc.fm ? 1 : 0)
       gl.uniform1i(cp.uniform('uShape'), sc.shape)
@@ -544,7 +578,7 @@ export class Renderer {
       this.toneKey = toneKey
       this.tonePass(this.targets, f, scene.print)
     }
-    const analysisKey = JSON.stringify([scene.sheet, scene.layers, scene.print.inks, scene.print.contrast, scene.print.stencil?.simplifyMm ?? 0, this.textures.size])
+    const analysisKey = JSON.stringify([scene.sheet, scene.layers, scene.print.inks, scene.print.contrast, scene.print.stencil?.simplifyMm ?? 0, scene.print.relief?.simplifyMm ?? 0, scene.print.relief?.threshold ?? 0, (scene.print.relief?.pieces ?? 0) > 0, this.textures.size])
     if (!this.analysis || analysisKey !== this.analysisKey) {
       this.analysisKey = analysisKey
       this.analysis = this.runAnalysis(scene, texture, this.analysis)
