@@ -36,3 +36,22 @@ describe('sanitizeDoc', () => {
     expect(d.layers[0].transform.x).toBe(0)
   })
 })
+
+describe('sanitizeDoc · Phase 06 fields', () => {
+  it('fills seed, imperfections, grain, registration and light in older saves', () => {
+    const { seed, imperfections, variant, ...old } = DEFAULT_DOC
+    void seed; void imperfections; void variant
+    const d = sanitizeDoc({ ...old, universal: { contrast: 10 }, paper: { id: 'kraft', texture: 50 } })
+    expect(d.seed).toBe(DEFAULT_DOC.seed)
+    expect(d.variant).toBe(-1)
+    expect(d.imperfections).toEqual(DEFAULT_DOC.imperfections)
+    expect(d.universal.grain).toBe(DEFAULT_DOC.universal.grain)
+    expect(d.universal.registration).toBe(DEFAULT_DOC.universal.registration)
+    expect(d.paper).toEqual({ id: 'kraft', texture: 50, light: DEFAULT_DOC.paper.light })
+  })
+
+  it('keeps a valid seed and rejects a bad one', () => {
+    expect(sanitizeDoc({ ...DEFAULT_DOC, seed: 4294967295 }).seed).toBe(4294967295)
+    expect(sanitizeDoc({ ...DEFAULT_DOC, seed: 'x' }).seed).toBe(DEFAULT_DOC.seed)
+  })
+})

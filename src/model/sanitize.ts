@@ -9,6 +9,8 @@ import { SHEET_SIZES } from './sheet'
 import { PAPERS } from './paper'
 import { ENGINE_PARAMS, engineOf } from '../presets/defs'
 import { sanitizeParams } from '../engines/types'
+import { sanitizeImperfections } from '../print/imperfections'
+import { sanitizeSeed } from '../util/seed'
 
 type Raw = Record<string, unknown>
 
@@ -91,9 +93,18 @@ export function sanitizeDoc(v: unknown): Doc {
       detail: num(u.detail, d.universal.detail, 0, 100),
       pressure: num(u.pressure, d.universal.pressure, 0, 100),
       roughness: num(u.roughness, d.universal.roughness, 0, 100),
+      grain: num(u.grain, d.universal.grain, 0, 100),
+      registration: num(u.registration, d.universal.registration, 0, 100),
     },
     params: sanitizeParams(ENGINE_PARAMS[engineOf(technique)], v.params),
-    paper: { id: pick(pa.id, PAPERS.map((p) => p.id), d.paper.id), texture: num(pa.texture, d.paper.texture, 0, 100) },
+    paper: {
+      id: pick(pa.id, PAPERS.map((p) => p.id), d.paper.id),
+      texture: num(pa.texture, d.paper.texture, 0, 100),
+      light: num(pa.light, d.paper.light, 0, 100),
+    },
+    imperfections: sanitizeImperfections(v.imperfections, d.imperfections),
+    seed: sanitizeSeed(v.seed, d.seed),
+    variant: Math.round(num(v.variant, -1, -1, 63)),
     layers: layers.filter((l) => (seen.has(l.id) ? false : (seen.add(l.id), true))),
   }
 }

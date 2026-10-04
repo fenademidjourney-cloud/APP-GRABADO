@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { t, type TextKey } from '../../i18n'
 import { Advanced, Label } from '../../ui/kit'
 import { RangeControl, Segmented, Switch } from '../../ui/controls'
@@ -10,6 +10,8 @@ import { ENGINE_PARAMS, PRESETS } from '../../presets/defs'
 import type { ParamValue, Params } from '../../engines/types'
 import { ParamControl } from '../../ui/ParamControl'
 import { SHEET_SIZES } from '../../model/sheet'
+import { IMPERFECTIONS, type ImperfectionId, type ImperfectionSettings } from '../../print/imperfections'
+import { SEED_MAX } from '../../util/seed'
 
 // Panel contents for the bottom sheet. Order inside every panel (04-componentes.md):
 // quick row · essential sections with their Label · Advanced at the end, folded.
@@ -34,6 +36,8 @@ const UNIVERSAL_DEFS: Record<UniversalKey, { label: TextKey; hint: TextKey; min:
   detail: { label: 'effect.detail', hint: 'effect.detailHint', min: 0, max: 100 },
   pressure: { label: 'effect.pressure', hint: 'effect.pressureHint', min: 0, max: 100 },
   roughness: { label: 'effect.roughness', hint: 'effect.roughnessHint', min: 0, max: 100 },
+  grain: { label: 'effect.grain', hint: 'effect.grainHint', min: 0, max: 100 },
+  registration: { label: 'effect.registration', hint: 'effect.registrationHint', min: 0, max: 100 },
 }
 
 /** Controls that don't apply to the current settings (e.g. lpi with a stochastic screen). */
@@ -42,10 +46,11 @@ function inapplicable(engine: string, params: Params): string[] {
   return params.shape === 'fm' ? ['lpi', 'angle', 'moire', 'detail'] : ['fmDot']
 }
 
-export function EffectPanel({ hasImage, technique, techniqueOn, universal, params, onUniversal, onParam, gesture, zoomHint }: {
+export function EffectPanel({ hasImage, technique, techniqueOn, inkCount, universal, params, onUniversal, onParam, gesture, zoomHint }: {
   hasImage: boolean
   technique: string
   techniqueOn: boolean
+  inkCount: number
   universal: Universal
   params: Params
   onUniversal: (k: UniversalKey, v: number) => void
@@ -57,7 +62,8 @@ export function EffectPanel({ hasImage, technique, techniqueOn, universal, param
   const def = PRESETS[technique]
   const engine = def && techniqueOn ? def.engine : 'none'
   const defs = ENGINE_PARAMS[engine]
-  const off = inapplicable(engine, params)
+  // With one ink there is nothing to register against.
+  const off = [...inapplicable(engine, params), ...(inkCount < 2 ? ['registration'] : [])]
 
   const control = (id: string) => {
     const wrap = (node: ReactNode) => off.includes(id)
@@ -89,14 +95,18 @@ export function EffectPanel({ hasImage, technique, techniqueOn, universal, param
         <NeedsImage ready={hasImage}>
           {control('contrast')}
           {control('ink')}
+          {control('pressure')}
+          {/* Detail and scale belong to each technique's engine: until it exists they stay at 30 %. */}
+          <p className="sheet-note">{t(def && !techniqueOn ? 'effect.techniqueOff' : 'effect.noEngine')}</p>
+          <fieldset className="panel-fieldset off" disabled>
+            <RangeControl label={t('effect.detail')} display="60%" value={60} min={0} max={100} onChange={() => {}} />
+            <RangeControl label={t('effect.scale')} display="85 lpi" value={85} min={20} max={200} onChange={() => {}} />
+          </fieldset>
+          <Advanced>
+            {control('grain')}
+            {control('registration')}
+          </Advanced>
         </NeedsImage>
-        {/* Detail, scale and pressure belong to each technique's engine: until it exists they stay at 30 %. */}
-        <p className="sheet-note">{t(def && !techniqueOn ? 'effect.techniqueOff' : 'effect.noEngine')}</p>
-        <fieldset className="panel-fieldset off" disabled>
-          <RangeControl label={t('effect.detail')} display="60%" value={60} min={0} max={100} onChange={() => {}} />
-          <RangeControl label={t('effect.scale')} display="85 lpi" value={85} min={20} max={200} onChange={() => {}} />
-          <RangeControl label={t('effect.pressure')} display="50%" value={50} min={0} max={100} onChange={() => {}} />
-        </fieldset>
       </div>
     )
   }
@@ -173,13 +183,19 @@ export function InksPanel({ doc, onInkMode, onActiveInk, onInkColor }: {
   )
 }
 
-export function MaterialPanel({ toggles, onToggle, paper, onPaper, gesture }: {
+export function MaterialPanel({ toggles, onToggle, paper, onPaper, imperfections, onImperfections, gesture }: {
   toggles: CleanToggles
   onToggle: (k: keyof CleanToggles, on: boolean) => void
   paper: PaperSettings
   onPaper: (p: Partial<PaperSettings>, key?: string) => void
+  imperfections: ImperfectionSettings
+  onImperfections: (p: Partial<ImperfectionSettings>, key?: string) => void
   gesture: SliderGesture
 }) {
+  const toggleImp = (id: ImperfectionId) => {
+    const on = imperfections.enabled.includes(id)
+    onImperfections({ enabled: IMPERFECTIONS.filter((x) => (x === id ? !on : imperfections.enabled.includes(x))) })
+  }
   return (
     <div className="panel-body">
       <Switch label={t('material.paper')} hint={t('material.paperHint')} checked={toggles.paper} onChange={(on) => onToggle('paper', on)} />
@@ -196,7 +212,52 @@ export function MaterialPanel({ toggles, onToggle, paper, onPaper, gesture }: {
         <RangeControl label={t('material.texture')} display={`${paper.texture}%`} value={paper.texture} min={0} max={100} gesture={gesture} onChange={(v) => onPaper({ texture: v }, 'paper-texture')} />
       </fieldset>
       <Switch label={t('material.imperfections')} hint={t('material.imperfectionsHint')} checked={toggles.imperfections} onChange={(on) => onToggle('imperfections', on)} />
+      <fieldset className={`panel-fieldset ${toggles.imperfections ? '' : 'off'}`} disabled={!toggles.imperfections}>
+        <div className="chips" role="group" aria-label={t('material.imperfections')}>
+          {IMPERFECTIONS.map((id) => {
+            const on = imperfections.enabled.includes(id)
+            return <button type="button" key={id} className={on ? 'on' : ''} aria-pressed={on} onClick={() => toggleImp(id)}>{t(`imp.${id}`)}</button>
+          })}
+        </div>
+        <p className="sheet-note">{t('material.impNote')}</p>
+        <RangeControl label={t('material.amount')} display={`${imperfections.amount}%`} value={imperfections.amount} min={0} max={100} gesture={gesture} onChange={(v) => onImperfections({ amount: v }, 'imp-amount')} />
+      </fieldset>
+      <Advanced>
+        <fieldset className={`panel-fieldset ${toggles.paper ? '' : 'off'}`} disabled={!toggles.paper}>
+          <RangeControl label={t('material.light')} display={`${paper.light}%`} value={paper.light} min={0} max={100} gesture={gesture} hint={t('material.lightHint')} onChange={(v) => onPaper({ light: v }, 'paper-light')} />
+        </fieldset>
+      </Advanced>
     </div>
+  )
+}
+
+/** The seed: typed as a number, or a fresh one with NUEVA. A typed value applies on Enter or when leaving the field. */
+function SeedControl({ seed, onSeed, onNewSeed }: { seed: number; onSeed: (s: number) => void; onNewSeed: () => void }) {
+  const [text, setText] = useState(String(seed))
+  useEffect(() => setText(String(seed)), [seed])
+  const apply = () => {
+    const n = Number(text.trim())
+    if (Number.isInteger(n) && n >= 0 && n <= SEED_MAX) { if (n !== seed) onSeed(n) }
+    else setText(String(seed))
+  }
+  return (
+    <>
+      <Label>{t('advanced.seed')}</Label>
+      <div className="seed-row">
+        <input
+          className="field seed-field"
+          type="text"
+          inputMode="numeric"
+          aria-label={t('advanced.seedField')}
+          value={text}
+          onChange={(e) => setText(e.target.value.replace(/[^0-9]/g, ''))}
+          onBlur={apply}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+        />
+        <div className="chips"><button type="button" aria-label={t('advanced.seedNewLabel')} onClick={onNewSeed}>{t('advanced.seedNew')}</button></div>
+      </div>
+      <p className="sheet-note">{t('advanced.seedNote')}</p>
+    </>
   )
 }
 
@@ -210,22 +271,25 @@ export function SheetSizes({ sheetId, onSheet }: { sheetId: string; onSheet: (id
   )
 }
 
-export function PrintAdvancedPanel({ doc, onToggle, onSheet }: {
+export function PrintAdvancedPanel({ doc, onToggle, onSheet, onSeed, onNewSeed }: {
   doc: Doc
   onToggle: (k: keyof CleanToggles, on: boolean) => void
   onSheet: (id: string) => void
+  onSeed: (s: number) => void
+  onNewSeed: () => void
 }) {
-  const sw = (k: keyof CleanToggles, key: Parameters<typeof t>[0]) => <Switch key={k} label={t(key)} checked={doc.toggles[k]} onChange={(on) => onToggle(k, on)} />
+  const sw = (k: keyof CleanToggles, key: TextKey, hint: TextKey) => <Switch key={k} label={t(key)} hint={t(hint)} checked={doc.toggles[k]} onChange={(on) => onToggle(k, on)} />
   return (
     <div className="panel-body">
       <Label>{t('advanced.clean')}</Label>
       <p className="sheet-note">{t('advanced.cleanNote')}</p>
-      {sw('technique', 'advanced.technique')}
-      {sw('inkTexture', 'advanced.inkTexture')}
-      {sw('imperfections', 'material.imperfections')}
-      {sw('paper', 'material.paper')}
-      {sw('color', 'advanced.color')}
-      {sw('registration', 'advanced.registration')}
+      {sw('technique', 'advanced.technique', 'advanced.techniqueHint')}
+      {sw('inkTexture', 'advanced.inkTexture', 'advanced.inkTextureHint')}
+      {sw('imperfections', 'material.imperfections', 'advanced.imperfectionsHint')}
+      {sw('paper', 'material.paper', 'material.paperHint')}
+      {sw('color', 'advanced.color', 'advanced.colorHint')}
+      {sw('registration', 'advanced.registration', 'advanced.registrationHint')}
+      <SeedControl seed={doc.seed} onSeed={onSeed} onNewSeed={onNewSeed} />
       <Advanced>
         <Label>{t('advanced.sheet')}</Label>
         <SheetSizes sheetId={doc.sheetId} onSheet={onSheet} />

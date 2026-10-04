@@ -70,6 +70,7 @@ uvec3 pcg3d(uvec3 v) {
   return v;
 }
 float hash2(ivec2 p, uint seed) { return float(pcg3d(uvec3(uvec2(p), seed)).x) / 4294967295.0; }
+vec3 hash3(ivec2 p, uint seed) { return vec3(pcg3d(uvec3(uvec2(p), seed))) / 4294967295.0; }
 float vnoise(vec2 p, uint seed) {
   vec2 i = floor(p);
   vec2 f = fract(p);
@@ -80,66 +81,32 @@ float vnoise(vec2 p, uint seed) {
   return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }
+float srgb1(float c) { c = max(c, 0.0); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+float linear1(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
 `
 
-export const COMPOSITE_FS = `#version 300 es
+// Tone pass: the AUTO separation plus each ink's grey plate, as the tone (dot %) of
+// every ink at every pixel: inks 1–4 in the first target, 5–6 in the second. The
+// composite reads it wherever a plate needs it (screen cell centres, registration),
+// and the analysis pass blurs it into the "mass" field.
+export const TONE_FS = `#version 300 es
 precision highp float;
-precision highp int;
 in vec2 vPx;
 uniform vec2 uCanvas;
-uniform vec4 uSheet;          // device px
-uniform float uPxPerMm;       // device px per mm
-uniform sampler2D uAll;       // every visible layer, in colour, over white
 uniform sampler2D uAuto;      // layers set to AUTO, over white
 uniform sampler2D uPlates0;   // grey plates for inks 1–3 (r, g, b)
 uniform sampler2D uPlates1;   // inks 4–6
 uniform int uInkCount;
 uniform vec3 uInkA[6];        // ink absorbance (−ln of the linear colour)
 uniform float uInkL[6];       // ink luminance transmittance at full density (linear)
-uniform float uDensity;       // ink film, 1 = nominal
 uniform float uContrast;      // −1..1
-uniform bool uColorOn;        // off: marks take the picture's own colours
-uniform bool uPaperOn;
-uniform bool uCompare;        // show the original
-uniform int uOutput;          // 0 screen (checkerboard behind transparency) · 1 file (straight-alpha RGBA)
-// Technique engine (docs/PLANNING.md §C.2). 0 = continuous ink, 1 = screen.
-uniform int uEngine;
-uniform bool uFM;             // stochastic screen instead of AM dots
-uniform int uShape;           // engines/screen/spot.ts · SHAPE_INDEX
-uniform float uSpotLut[33];   // tone → threshold (inked area = tone)
-uniform float uLpi;
-uniform float uAngles[6];     // radians, per ink
-uniform float uGainMm;        // dot gain: growth of each dot's edge
-uniform float uSoftMm;
-uniform float uRough;         // 0..1 ragged dot edges
-uniform float uDetail;        // 0 tone at the cell centre · 1 tone per pixel
-uniform float uFmDotMm;
-uniform highp sampler2D uBlue; // 64 × 64 blue-noise ranks (R32F)
-uniform vec3 uPaper;          // sRGB
-uniform float uFibre;         // 0..1 (already × texture amount)
-uniform float uFlocs;
-uniform vec3 uCheckA;
-uniform vec3 uCheckB;
-uniform float uCheck;
-out vec4 outColor;
+layout(location = 0) out vec4 outTone0;
+layout(location = 1) out vec4 outTone1;
 ${COMMON}
 
 vec3 contrastSrgb(vec3 c) {
   float k = uContrast >= 0.0 ? 1.0 + uContrast * 2.0 : 1.0 + uContrast * 0.8;
   return clamp((c - 0.5) * k + 0.5, 0.0, 1.0);
-}
-
-// Paper tone v1: pulp clouds (~3 mm) and fibres (long thin streaks in a few directions).
-// Fibres fade out when a device pixel is larger than they are (no false grain when zoomed out).
-float paperTone(vec2 mm) {
-  float mmPerPx = 1.0 / uPxPerMm;
-  float flocs = (vnoise(mm / 3.2, 11u) * 0.6 + vnoise(mm / 1.1, 12u) * 0.4) - 0.5;
-  float fine = clamp(1.5 - mmPerPx / 0.12, 0.0, 1.0);
-  float fib = 0.0;
-  fib += vnoise(rot(0.4) * mm * vec2(0.9, 7.5), 21u) - 0.5;
-  fib += vnoise(rot(2.1) * mm * vec2(0.8, 8.5), 22u) - 0.5;
-  fib += vnoise(rot(-1.2) * mm * vec2(1.1, 6.5), 23u) - 0.5;
-  return 1.0 - uFlocs * 0.09 * flocs - uFibre * 0.06 * fib * fine;
 }
 
 // Separation: non-negative least squares in absorbance space (print/ink.ts · separate).
@@ -157,37 +124,171 @@ void separate(vec3 target, out float d[6]) {
   }
 }
 
-vec2 uvOfMm(vec2 mm) {
-  vec2 px = uSheet.xy + mm * uPxPerMm;
-  return vec2(px.x / uCanvas.x, 1.0 - px.y / uCanvas.y);
-}
-
-float srgb1(float c) { c = max(c, 0.0); return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
-float linear1(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
-
 // Tones live in "dot %" (print/ink.ts · coverageForDensity): the share of paper an
 // ink covers, on a perceptual scale like prepress files (a 50 % grey ≈ a 50 % tint).
-// A film of density d looks like a tint of this coverage, and back.
 float coverageForDensity(float d, int k) {
   float tl = max(uInkL[k], 0.002);
   float g = srgb1(exp(log(tl) * d));
   return clamp((1.0 - g) / max(1.0 - srgb1(tl), 1e-3), 0.0, 1.0);
 }
-float densityForCoverage(float a, int k) {
-  float tl = max(uInkL[k], 0.002);
-  float g = 1.0 - a * (1.0 - srgb1(tl));
-  return clamp(log(max(linear1(g), 1e-4)) / log(tl), 0.0, 1.0);
-}
 
-// Tone (dot %) of ink k at a point of the targets: AUTO separation + its grey plate.
-float inkToneAt(int k, vec2 uv) {
+void main() {
+  vec2 uv = vec2(vPx.x / uCanvas.x, 1.0 - vPx.y / uCanvas.y);
   float d[6];
   separate(toLinear(contrastSrgb(texture(uAuto, uv).rgb)), d);
   vec3 p0 = contrastSrgb(texture(uPlates0, uv).rgb);
   vec3 p1 = contrastSrgb(texture(uPlates1, uv).rgb);
-  // Grey plates follow print convention: a 40 % grey is a 40 % tint of that ink.
-  float plate = 1.0 - (k < 3 ? p0[k] : p1[k - 3]);
-  return 1.0 - (1.0 - coverageForDensity(d[k], k)) * (1.0 - plate);
+  float t[8];
+  for (int k = 0; k < 8; k++) t[k] = 0.0;
+  for (int k = 0; k < 6; k++) {
+    if (k >= uInkCount) break;
+    // Grey plates follow print convention: a 40 % grey is a 40 % tint of that ink.
+    float plate = 1.0 - (k < 3 ? p0[k] : p1[k - 3]);
+    t[k] = 1.0 - (1.0 - coverageForDensity(d[k], k)) * (1.0 - plate);
+  }
+  outTone0 = vec4(t[0], t[1], t[2], t[3]);
+  outTone1 = vec4(t[4], t[5], 0.0, 1.0);
+}`
+
+// Separable Gaussian over the two tone targets at once (13 taps, ±2σ). Run twice
+// (across, then down) at analysis resolution, it gives the "mass": how much ink the
+// surroundings of a point ask for. Large masses run out of ink first.
+export const BLUR_FS = `#version 300 es
+precision highp float;
+in vec2 vPx;
+uniform vec2 uCanvas;
+uniform sampler2D uSrc0;
+uniform sampler2D uSrc1;
+uniform vec2 uStep;           // one tap, in uv (σ / 3)
+layout(location = 0) out vec4 out0;
+layout(location = 1) out vec4 out1;
+void main() {
+  vec2 uv = vec2(vPx.x / uCanvas.x, 1.0 - vPx.y / uCanvas.y);
+  vec4 a = vec4(0.0), b = vec4(0.0);
+  float wsum = 0.0;
+  for (int i = -6; i <= 6; i++) {
+    float w = exp(-0.5 * float(i * i) / 9.0);
+    vec2 q = uv + uStep * float(i);
+    a += texture(uSrc0, q) * w;
+    b += texture(uSrc1, q) * w;
+    wsum += w;
+  }
+  out0 = a / wsum;
+  out1 = b / wsum;
+}`
+
+export const COMPOSITE_FS = `#version 300 es
+precision highp float;
+precision highp int;
+in vec2 vPx;
+uniform vec2 uCanvas;
+uniform vec4 uSheet;          // device px
+uniform vec2 uSheetMm;        // sheet size, mm
+uniform float uPxPerMm;       // device px per mm
+uniform sampler2D uAll;       // every visible layer, in colour, over white
+uniform sampler2D uTone0;     // tone (dot %) of inks 1–4 (TONE_FS)
+uniform sampler2D uTone1;     // inks 5–6
+uniform sampler2D uMass0;     // the tone blurred over a few mm, whole sheet (BLUR_FS)
+uniform sampler2D uMass1;
+uniform vec2 uMassUv;         // mm → uv of the mass textures
+uniform int uInkCount;
+uniform vec3 uInkA[6];        // ink absorbance (−ln of the linear colour)
+uniform float uDensity;       // ink film, 1 = nominal
+uniform float uContrast;      // −1..1 (only for "Color" off: the tone pass applies it otherwise)
+uniform bool uColorOn;        // off: marks take the picture's own colours
+uniform bool uPaperOn;
+uniform bool uCompare;        // show the original
+uniform int uOutput;          // 0 screen (checkerboard behind transparency) · 1 file (straight-alpha RGBA)
+uniform uint uSeed;           // util/seed.ts: every random field derives its stream from it
+// Registration (print/registration.ts): per ink, shift in mm and turn in radians.
+uniform vec3 uReg[6];
+// Impression model (docs/PLANNING.md §C.3 · 2). Off ("Textura de tinta"): ideal print.
+uniform bool uInkTexture;
+uniform float uPressure;      // 0..1, 0.5 = nominal
+uniform float uGrain;         // 0..1 · mottle of the film
+uniform float uBleedMm;       // how far ink wicks along the fibres
+uniform float uContact;       // how much the paper's relief matters (print/impression.ts)
+uniform float uDepletion;     // how fast masses run out of ink
+// Imperfections (print/imperfections.ts): amount 0..1 and a mask of IMPERFECTION_BIT.
+uniform float uImpAmount;
+uniform int uImpMask;
+// Technique engine (docs/PLANNING.md §C.2). 0 = continuous ink, 1 = screen.
+uniform int uEngine;
+uniform bool uFM;             // stochastic screen instead of AM dots
+uniform int uShape;           // engines/screen/spot.ts · SHAPE_INDEX
+uniform float uSpotLut[33];   // tone → threshold (inked area = tone)
+uniform float uLpi;
+uniform float uAngles[6];     // radians, per ink
+uniform float uGainMm;        // dot gain: growth of each dot's edge
+uniform float uSoftMm;
+uniform float uRough;         // 0..1 ragged dot edges
+uniform float uDetail;        // 0 tone at the cell centre · 1 tone per pixel
+uniform float uFmDotMm;
+uniform highp sampler2D uBlue; // 64 × 64 blue-noise ranks (R32F)
+// Paper (substrate v2): colour, fibre and pulp, relief depth and raking light.
+uniform vec3 uPaper;          // sRGB
+uniform float uFibre;         // 0..1 (already × texture amount)
+uniform float uFlocs;
+uniform float uRelief;        // 0..1 (already × texture amount)
+uniform float uLight;         // 0..1
+uniform vec3 uCheckA;
+uniform vec3 uCheckB;
+uniform float uCheck;
+out vec4 outColor;
+${COMMON}
+
+const int IMP_PRESSURE = 1;
+const int IMP_STARVED = 2;
+const int IMP_DUST = 4;
+const int IMP_WEAR = 8;
+const int IMP_STAINS = 16;
+
+// Seed streams: the same module ids as util/seed.ts · STREAM.
+uint stream(uint m) { return pcg3d(uvec3(uSeed, m, 0x2545u)).x; }
+uint sPaper, sImpression, sImperf, sScreen;
+
+bool imp(int bit) { return uImpAmount > 0.0 && (uImpMask & bit) != 0; }
+
+vec3 contrastSrgb(vec3 c) {
+  float k = uContrast >= 0.0 ? 1.0 + uContrast * 2.0 : 1.0 + uContrast * 0.8;
+  return clamp((c - 0.5) * k + 0.5, 0.0, 1.0);
+}
+
+// Paper: pulp clouds (~3 mm) and fibres (long thin streaks in a few directions).
+// x = albedo factor, y = height (0 valley · 1 crest), z = height of the pulp alone.
+// Fibres fade out when a device pixel is larger than they are (no false grain when
+// zoomed out).
+const float FIBRE_HEIGHT = 0.45;
+const float FIBRE_SIGMA = 0.16;   // spread of the fibres' height term (3 noises × 0.45)
+float fineFade() { return clamp(1.5 - (1.0 / uPxPerMm) / 0.12, 0.0, 1.0); }
+vec3 paperField(vec2 mm, float fine) {
+  float flocs = (vnoise(mm / 3.2, sPaper ^ 11u) * 0.6 + vnoise(mm / 1.1, sPaper ^ 12u) * 0.4) - 0.5;
+  float fib = 0.0;
+  fib += vnoise(rot(0.4) * mm * vec2(0.9, 7.5), sPaper ^ 21u) - 0.5;
+  fib += vnoise(rot(2.1) * mm * vec2(0.8, 8.5), sPaper ^ 22u) - 0.5;
+  fib += vnoise(rot(-1.2) * mm * vec2(1.1, 6.5), sPaper ^ 23u) - 0.5;
+  float tone = 1.0 - uFlocs * 0.09 * flocs - uFibre * 0.06 * fib * fine;
+  float low = 0.5 + 0.55 * flocs;
+  return vec3(tone, clamp(low + FIBRE_HEIGHT * fib * fine, 0.0, 1.0), low);
+}
+
+vec2 uvOfMm(vec2 mm) {
+  vec2 px = uSheet.xy + mm * uPxPerMm;
+  return vec2(px.x / uCanvas.x, 1.0 - px.y / uCanvas.y);
+}
+
+// Where on its plate ink k reads a point of the sheet: the pass is shifted and turned
+// about the sheet centre (registration). Only coordinates move; nothing is resampled.
+vec2 plateMm(int k, vec2 mm) {
+  vec3 g = uReg[k];
+  vec2 c = uSheetMm * 0.5;
+  return rot(-g.z) * (mm - c - g.xy) + c;
+}
+
+float toneAt(int k, vec2 uv) { return k < 4 ? texture(uTone0, uv)[k] : texture(uTone1, uv)[k - 4]; }
+float massAt(int k, vec2 mm) {
+  vec2 uv = vec2(mm.x * uMassUv.x, 1.0 - mm.y * uMassUv.y);
+  return k < 4 ? texture(uMass0, uv)[k] : texture(uMass1, uv)[k - 4];
 }
 
 // Spot functions: mirror of engines/screen/spot.ts · spotRaw.
@@ -208,12 +309,12 @@ float spotThreshold(float t) {
 }
 
 // Blue-noise rank of an FM cell. Each 64-cell tile is flipped / transposed by a hash
-// so the tile never repeats visibly; each ink starts at a different offset.
+// (of the seed too) so the tile never repeats visibly; each ink starts elsewhere.
 float blueRank(ivec2 cell, int k) {
   cell += ivec2(17 * k, 29 * k);
   ivec2 tile = ivec2(floor(vec2(cell) / 64.0));
   ivec2 l = cell - tile * 64;
-  uint h = pcg3d(uvec3(uvec2(tile + 4096), uint(k) + 7u)).x;
+  uint h = pcg3d(uvec3(uvec2(tile + 4096), (uint(k) + 7u) ^ sScreen)).x;
   if ((h & 1u) != 0u) l.x = 63 - l.x;
   if ((h & 2u) != 0u) l.y = 63 - l.y;
   if ((h & 4u) != 0u) l = l.yx;
@@ -227,44 +328,132 @@ float gainedTone(float t, float g) {
   return clamp(t + 3.5449 * sqrt(max(min(t, 1.0 - t), 0.0)) * g, 0.0, 1.0);
 }
 
+// Antialiased disc: 1 inside radius r (mm), 0 outside.
+float disc(float d, float r, float aa) { return clamp(0.5 - (d - r) / aa, 0.0, 1.0); }
+
+// Uneven pressure: a press prints harder on one side, plus soft patches (1 = nominal).
+float pressureField(vec2 mm) {
+  if (!imp(IMP_PRESSURE)) return 1.0;
+  float side = (hash2(ivec2(1, 2), sImperf) < 0.5 ? 1.0 : -1.0) * (mm.x / uSheetMm.x - 0.5);
+  float patches = (vnoise(mm / 38.0, sImperf ^ 41u) - 0.5) * 1.2 + (vnoise(mm / 9.0, sImperf ^ 42u) - 0.5) * 0.5;
+  return max(0.0, 1.0 + uImpAmount * (0.55 * side + 0.8 * patches));
+}
+
+// Dust on plate k (mm in plate coordinates): x = white speck mask (1 = ink stays),
+// y = hickey core (a dot of ink that prints full inside its white halo).
+vec2 dust(int k, vec2 pm, float aa) {
+  if (!imp(IMP_DUST)) return vec2(1.0, 0.0);
+  const float CELL = 2.5;
+  ivec2 c = ivec2(floor(pm / CELL));
+  vec3 h = hash3(c, sImperf ^ (51u + uint(k)));
+  if (h.x > uImpAmount * 0.22) return vec2(1.0, 0.0);
+  vec3 g = hash3(c, sImperf ^ (61u + uint(k)));
+  vec2 centre = (vec2(c) + 0.25 + 0.5 * g.xy) * CELL;
+  float r = 0.04 + 0.16 * h.y * h.y;
+  float d = length(pm - centre);
+  if (g.z < 0.35) {
+    // Hickey: core of ink, ring of paper (offset and letterpress).
+    float ring = disc(d, r * 1.6, aa) * (1.0 - disc(d, r * 0.55, aa));
+    return vec2(1.0 - ring, disc(d, r * 0.55, aa));
+  }
+  return vec2(1.0 - disc(d, r, aa), 0.0);
+}
+
+// Stains and foxing on the paper: a brownish tint with a darker rim.
+vec3 stains(vec2 mm, float aa) {
+  vec3 tint = vec3(1.0);
+  if (!imp(IMP_STAINS)) return tint;
+  vec3 brown = vec3(0.86, 0.72, 0.52);
+  // Large stains: one possible per 18 mm cell, up to 6 mm wide.
+  ivec2 c = ivec2(floor(mm / 18.0));
+  for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+    ivec2 cc = c + ivec2(dx, dy);
+    vec3 h = hash3(cc, sImperf ^ 71u);
+    if (h.x > uImpAmount * 0.35) continue;
+    vec2 centre = (vec2(cc) + 0.3 + 0.4 * h.yz) * 18.0;
+    vec2 v = mm - centre;
+    float r = (1.5 + 4.5 * hash2(cc, sImperf ^ 72u)) * (0.8 + 0.4 * vnoise(vec2(atan(v.y, v.x) * 2.0, 0.0) + vec2(cc), sImperf ^ 73u));
+    float d = length(v);
+    float inside = disc(d, r, aa * 2.0);
+    float rim = inside * smoothstep(r * 0.6, r, d);
+    float k = (0.12 + 0.18 * hash2(cc, sImperf ^ 74u)) * uImpAmount;
+    tint *= mix(vec3(1.0), brown, k * (inside * 0.6 + rim * 0.9));
+  }
+  // Foxing: small rusty dots.
+  ivec2 f = ivec2(floor(mm / 4.0));
+  vec3 hf = hash3(f, sImperf ^ 75u);
+  if (hf.x < uImpAmount * 0.12) {
+    vec2 centre = (vec2(f) + 0.25 + 0.5 * hf.yz) * 4.0;
+    float r = 0.15 + 0.4 * hash2(f, sImperf ^ 76u);
+    tint *= mix(vec3(1.0), vec3(0.78, 0.6, 0.42), 0.5 * uImpAmount * disc(length(mm - centre), r, max(aa, r * 0.6)));
+  }
+  return tint;
+}
+
 void main() {
   vec2 uv = vec2(vPx.x / uCanvas.x, 1.0 - vPx.y / uCanvas.y);
   vec2 mm = (vPx - uSheet.xy) / uPxPerMm;
+  sPaper = stream(1u);
+  sImpression = stream(2u);
+  sImperf = stream(3u);
+  sScreen = stream(5u);
+  float aaMm = 1.0 / uPxPerMm;
+  float fine = fineFade();
+  bool paperOn = uPaperOn && !uCompare;
+  vec3 pf = paperOn ? paperField(mm, fine) : vec3(1.0);
+
   vec3 onWhite;
   if (uCompare) {
     onWhite = toLinear(texture(uAll, uv).rgb);
   } else if (!uColorOn) {
     onWhite = toLinear(contrastSrgb(texture(uAll, uv).rgb));
   } else {
-    float d[6];
-    separate(toLinear(contrastSrgb(texture(uAuto, uv).rgb)), d);
-    vec3 p0 = contrastSrgb(texture(uPlates0, uv).rgb);
-    vec3 p1 = contrastSrgb(texture(uPlates1, uv).rgb);
     onWhite = vec3(1.0);
     float aa = max(1.0, uSoftMm * uPxPerMm);
-    float gainPx = uGainMm * uPxPerMm;
+    float pField = pressureField(mm);
+    float press = uPressure * pField;
+    // Contact with the paper (relief impression): ink reaches into the paper's valleys
+    // only as deep as the pressure pushes it. Valleys that aren't reached stay white.
+    // Zoomed out, where fibres fade, the transition widens towards the average.
+    float contact = 1.0;
+    if (uInkTexture && paperOn && uRelief * uContact > 0.0) {
+      // The ink reaches down to a height hMin; below it the paper stays white.
+      float hMin = 1.0 - (0.12 + 0.6 * press) / (uRelief * uContact);
+      float sharp = smoothstep(hMin - 0.03, hMin + 0.03, pf.y);
+      // Zoomed out the fibres can't be drawn: use the share of them that's reached
+      // (their height spreads about the pulp's as a bell, ≈ a smoothstep of ±2σ).
+      float mean = smoothstep(hMin - 2.0 * FIBRE_SIGMA, hMin + 2.0 * FIBRE_SIGMA, pf.z);
+      contact = mix(mean, sharp, fine);
+    }
+    // Fibre direction field for bleed: ink wicks along it.
+    vec2 fibreDir = vec2(cos(vnoise(mm / 2.0, sPaper ^ 31u) * 6.2832), sin(vnoise(mm / 2.0, sPaper ^ 31u) * 6.2832));
     for (int k = 0; k < 6; k++) {
       if (k >= uInkCount) break;
-      // Grey plates follow print convention: a 40 % grey is a 40 % tint of that ink.
-      float plate = 1.0 - (k < 3 ? p0[k] : p1[k - 3]);
-      float dk = 1.0 - (1.0 - coverageForDensity(d[k], k)) * (1.0 - plate);
+      vec2 pm = plateMm(k, mm);
+      vec2 uvk = uvOfMm(pm);
+      // Bleed: the plate's tone is read a little away along the fibres, so edges feather.
+      float wick = 0.0;
+      if (uInkTexture && uBleedMm > 0.0) wick = (vnoise(rot(0.4) * mm * vec2(1.0, 6.0), sImpression ^ (81u + uint(k))) - 0.3) * uBleedMm;
+      float dk = toneAt(k, uvk + fibreDir * wick * uPxPerMm / uCanvas * vec2(1.0, -1.0));
+      float mass = massAt(k, pm);
+      float cov = 1.0;
+      float dens = uDensity;
       if (uEngine == 1) {
-        float cov;
         float cellMm = uFM ? uFmDotMm : 25.4 / uLpi;
         float cellPx = cellMm * uPxPerMm;
-        float tone = dk;
+        float gainPx = (uGainMm + max(wick, 0.0) * 0.5) * uPxPerMm;
         if (uFM) {
           // Stochastic: equal dots, as many as the tone asks for, spread by blue noise.
           // Each dot is a slightly rounded square a little larger than its cell; the
           // dots of the 3 × 3 neighbourhood add up, so touching dots merge without seams.
-          vec2 g = mm / cellMm;
+          vec2 g = pm / cellMm;
           vec2 ci = floor(g);
           vec2 f = g - ci - 0.5;
           cov = 0.0;
           for (int dy = -1; dy <= 1; dy++) {
             for (int dx = -1; dx <= 1; dx++) {
               vec2 o = vec2(float(dx), float(dy));
-              if (blueRank(ivec2(ci + o), k) >= tone - 0.001) continue;
+              if (blueRank(ivec2(ci + o), k) >= dk - 0.001) continue;
               float sd = length(max(abs(f - o) - 0.45, 0.0)) - 0.08;
               cov += clamp(0.5 - (sd * cellPx - gainPx) / aa, 0.0, 1.0);
             }
@@ -274,15 +463,15 @@ void main() {
           // AM: rotate into the ink's screen, find the cell, read the tone at its centre.
           float ang = uAngles[k];
           mat2 R = mat2(cos(ang), sin(ang), -sin(ang), cos(ang));
-          vec2 u = (R * mm) / cellMm;
+          vec2 u = (R * pm) / cellMm;
           vec2 ci = floor(u) + 0.5;
           vec2 f = u - ci;
           vec2 centreMm = transpose(R) * (ci * cellMm);
-          tone = mix(inkToneAt(k, uvOfMm(centreMm)), dk, uDetail);
+          float tone = mix(toneAt(k, uvOfMm(centreMm)), dk, uDetail);
           float raw = spotRaw(f);
           float grad = length(vec2(dFdx(raw), dFdy(raw)));
           float phiPx = (raw - spotThreshold(tone)) / max(grad, 1e-5);
-          phiPx += (vnoise(mm * 28.0, 31u + uint(k)) - 0.5) * uRough * cellPx * 0.3;
+          phiPx += (vnoise(pm * 28.0, sScreen ^ (31u + uint(k))) - 0.5) * uRough * cellPx * 0.3;
           cov = clamp(0.5 - (phiPx - gainPx) / aa, 0.0, 1.0);
           if (tone < 0.003) cov = 0.0;
           if (tone > 0.997) cov = 1.0;
@@ -293,18 +482,67 @@ void main() {
         // beating against its own pixel grid.
         float lod = uOutput == 1 ? smoothstep(0.8, 1.6, cellPx) : smoothstep(2.5, 5.0, cellPx);
         cov = mix(gainedTone(dk, uGainMm / cellMm), cov, lod);
-        // Inside a dot the full film prints; partial coverage (dot edges, zoomed out)
-        // averages in reflected light. Overlapping dots of different inks multiply.
-        onWhite *= mix(vec3(1.0), exp(-uInkA[k] * uDensity), cov);
       } else {
         // Continuous tone: the film thickness that looks like this tint.
-        onWhite *= exp(-uInkA[k] * densityForCoverage(dk, k) * uDensity);
+        float tl = 0.2126 * exp(-uInkA[k].r) + 0.7152 * exp(-uInkA[k].g) + 0.0722 * exp(-uInkA[k].b);
+        tl = max(tl, 0.002);
+        float gTone = 1.0 - dk * (1.0 - srgb1(tl));
+        dens *= clamp(log(max(linear1(gTone), 1e-4)) / log(tl), 0.0, 1.0);
       }
+
+      if (uInkTexture) {
+        // Film mottle: the roller never lays an even film.
+        float mottle = (vnoise(pm / 2.2, sImpression ^ (91u + uint(k))) * 0.6 + vnoise(pm / 0.55, sImpression ^ (101u + uint(k))) * 0.4) - 0.5;
+        dens *= 1.0 + uGrain * 0.7 * mottle;
+        // Depletion: large masses run out of ink first, more so with a thin film.
+        float starve = smoothstep(0.35, 0.95, mass) * (0.05 + 0.2 * uGrain) * uDepletion * clamp(1.4 - uDensity * 0.6, 0.3, 1.2);
+        dens *= 1.0 - starve * (0.5 + vnoise(pm / 4.0, sImpression ^ (111u + uint(k))));
+        cov *= contact;
+        // Pressure (nominal 0.5) and uneven pressure thin or thicken the film a little.
+        dens *= mix(1.0, 0.75 + 0.5 * press, 0.6);
+      } else {
+        dens *= mix(1.0, pField, 0.6);
+      }
+
+      if (imp(IMP_STARVED)) {
+        // Missing ink: blotches with ragged edges, mostly where the plate held a mass.
+        float n = vnoise(pm / 5.0, sImperf ^ (121u + uint(k))) * 0.6 + vnoise(pm / 1.2, sImperf ^ (131u + uint(k))) * 0.28
+                + vnoise(pm / 0.22, sImperf ^ (135u + uint(k))) * 0.12;
+        float thr = 0.95 - uImpAmount * 0.28 * smoothstep(0.2, 1.0, mass);
+        cov *= 1.0 - 0.85 * smoothstep(thr - 0.01, thr + 0.02, n);
+      }
+      if (imp(IMP_WEAR)) {
+        // Worn plate: fine streaks along the wiping / rolling direction stop printing.
+        // They come in patches (where the plate was rubbed), not all over.
+        float rubbed = smoothstep(0.55, 0.8, vnoise(pm / 14.0, sImperf ^ (145u + uint(k))));
+        float n = vnoise(rot(0.25) * pm * vec2(0.3, 4.0), sImperf ^ (141u + uint(k)));
+        float thr = 0.97 - 0.2 * uImpAmount * rubbed;
+        cov *= 1.0 - smoothstep(thr, thr + 0.03, n) * 0.85;
+      }
+      vec2 du = dust(k, pm, aaMm);
+      cov = max(cov * du.x, du.y * step(0.15, dk));
+
+      // Inside a mark the film prints; partial coverage (dot edges, zoomed out)
+      // averages in reflected light. Overlapping inks multiply (Beer–Lambert).
+      onWhite *= mix(vec3(1.0), exp(-uInkA[k] * max(dens, 0.0)), clamp(cov, 0.0, 1.0));
     }
   }
-  if (uPaperOn) {
-    vec3 paper = uCompare ? vec3(1.0) : toLinear(uPaper) * paperTone(mm);
-    outColor = vec4(toSrgb(paper * onWhite), 1.0);
+  if (paperOn) {
+    vec3 paper = toLinear(uPaper) * pf.x * stains(mm, aaMm);
+    vec3 c = paper * onWhite;
+    // Raking light over the paper's relief (top left, low): crests light, valleys shade.
+    if (uLight > 0.0 && uRelief > 0.0) {
+      float e = max(aaMm, 0.03);
+      float hx = paperField(mm + vec2(e, 0.0), fine).y - pf.y;
+      float hy = paperField(mm + vec2(0.0, e), fine).y - pf.y;
+      vec2 slope = vec2(hx, hy) / e * uRelief * 0.06;
+      c *= 1.0 - uLight * 1.6 * dot(slope, vec2(0.7, 0.7));
+    }
+    outColor = vec4(toSrgb(c), 1.0);
+    return;
+  }
+  if (uCompare && uPaperOn) {
+    outColor = vec4(toSrgb(onWhite), 1.0);
     return;
   }
   // No paper: only the ink, over transparency (print/ink.ts · inkOnTransparent),

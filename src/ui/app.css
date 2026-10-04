@@ -18,6 +18,11 @@
 /* ---------------- Panels ---------------- */
 .panel-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; transition: opacity .12s; }
 .panel-fieldset.off { opacity: .3; }
+
+/* Seed (Avanzado): the number and NUEVA on one row. */
+.seed-row { display: flex; gap: 6px; align-items: stretch; }
+.seed-row .seed-field { flex: 1 1 auto; min-width: 0; background: var(--white); text-align: left; font-variant-numeric: tabular-nums; }
+.seed-row .chips { flex: none; }
 .selector:disabled { opacity: .3; cursor: default; }
 
 /* Ink chips: which ink the colour swatches apply to. */

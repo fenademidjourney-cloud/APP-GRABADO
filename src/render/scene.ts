@@ -5,6 +5,7 @@
 import type { Layer } from '../model/layer'
 import type { View } from './view'
 import type { ScreenUniforms } from '../engines/screen/params'
+import type { InkRegistration } from '../print/registration'
 
 export interface SceneColors {
   card: string      // the canvas card (token --card)
@@ -12,7 +13,7 @@ export interface SceneColors {
   checkB: string
 }
 
-/** What the print pipeline needs (Phase 03: continuous ink, no technique yet). */
+/** What the print pipeline needs (docs/PLANNING.md §C.3, §D). */
 export interface PrintScene {
   inks: string[]          // sRGB hex, print order
   inkDensity: number      // ink film, 1 = nominal
@@ -20,7 +21,15 @@ export interface PrintScene {
   paperOn: boolean
   colorOn: boolean        // off: marks keep the picture's colours
   compare: boolean        // show the original (Comparar)
-  paper: { color: string; fibre: number; flocs: number; texture: number }
+  /** Every random field of the print derives from it (util/seed.ts). */
+  seed: number
+  /** Per ink, in print order; all zero with Registro off. */
+  registration: InkRegistration[]
+  /** Impression model; `on` false ("Textura de tinta" off) = ideal print. contact and depletion: print/impression.ts. */
+  impression: { on: boolean; pressure: number; grain: number; bleedMm: number; contact: number; depletion: number }
+  /** amount 0..1 (0 with Imperfecciones off) and print/imperfections.ts · IMPERFECTION_BIT mask. */
+  imperfections: { amount: number; mask: number }
+  paper: { color: string; fibre: number; flocs: number; texture: number; relief: number; light: number }
   /** The technique engine; absent (or Técnica off) = continuous ink. */
   screen?: ScreenUniforms
 }

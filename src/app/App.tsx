@@ -11,7 +11,12 @@ import { DEFAULT_DOC, inksFor, type CleanToggles, type Doc, type InkMode, type P
 import { createLayer, type Layer } from '../model/layer'
 import { paperById } from '../model/paper'
 import { applyPreset } from '../presets/apply'
-import { engineOf } from '../presets/defs'
+import { engineOf, variantsOf } from '../presets/defs'
+import { rollVariant } from '../presets/variant'
+import { imperfectionMask, type ImperfectionSettings } from '../print/imperfections'
+import { registrationOffsets } from '../print/registration'
+import { impressionOf } from '../print/impression'
+import { newSeed } from '../util/seed'
 import { resolveScreen } from '../engines/screen/params'
 import type { ParamValue } from '../engines/types'
 import type { PrintScene } from '../render/scene'
@@ -166,16 +171,33 @@ export default function App() {
   // What the renderer needs to print: a new object only when one of these changes.
   const print: Omit<PrintScene, 'compare'> = useMemo(() => {
     const paper = paperById(doc.paper.id)
+    const u = doc.universal
+    const model = impressionOf(doc.technique)
     return {
       inks: doc.inks,
-      inkDensity: doc.universal.ink / 100,
-      contrast: doc.universal.contrast / 100,
+      inkDensity: u.ink / 100,
+      contrast: u.contrast / 100,
       paperOn: doc.toggles.paper,
       colorOn: doc.toggles.color,
-      paper: { color: paper.color, fibre: paper.fibre, flocs: paper.flocs, texture: doc.paper.texture / 100 },
-      screen: doc.toggles.technique && engineOf(doc.technique) === 'screen' ? resolveScreen(doc.params, doc.universal, doc.inks.length) : undefined,
+      seed: doc.seed,
+      registration: registrationOffsets(doc.seed, doc.toggles.registration ? u.registration : 0, doc.inks.length),
+      impression: {
+        on: doc.toggles.inkTexture,
+        pressure: u.pressure / 100,
+        grain: u.grain / 100,
+        // Ink wicks along the fibres: more with absorbent paper, a full film and pressure.
+        bleedMm: doc.toggles.paper ? 0.12 * model.bleed * paper.absorb * Math.min(1.5, u.ink / 100) * (0.5 + u.pressure / 100) : 0,
+        contact: model.contact,
+        depletion: model.depletion,
+      },
+      imperfections: {
+        amount: doc.toggles.imperfections ? doc.imperfections.amount / 100 : 0,
+        mask: imperfectionMask(doc.imperfections.enabled),
+      },
+      paper: { color: paper.color, fibre: paper.fibre, flocs: paper.flocs, texture: doc.paper.texture / 100, relief: paper.relief, light: doc.paper.light / 100 },
+      screen: doc.toggles.technique && engineOf(doc.technique) === 'screen' ? resolveScreen(doc.params, u, doc.inks.length) : undefined,
     }
-  }, [doc.inks, doc.universal, doc.toggles, doc.paper, doc.technique, doc.params])
+  }, [doc.inks, doc.universal, doc.toggles, doc.paper, doc.technique, doc.params, doc.seed, doc.imperfections])
   const [screenLod, setScreenLod] = useState(false)
 
   const setMode = (mode: Mode) => { setTechniqueOpen(false); setPrefs((p) => ({ ...p, mode })) }
@@ -289,6 +311,16 @@ export default function App() {
   const onSheet = (sheetId: string) => setDoc((d) => ({ ...d, sheetId }))
   const onUniversal = (k: keyof Universal, v: number) => setDoc((d) => ({ ...d, universal: { ...d.universal, [k]: v } }), `universal-${k}`)
   const onPaper = (p: Partial<PaperSettings>, key?: string) => setDoc((d) => ({ ...d, paper: { ...d.paper, ...p } }), key)
+  const onImperfections = (p: Partial<ImperfectionSettings>, key?: string) => setDoc((d) => ({ ...d, imperfections: { ...d.imperfections, ...p } }), key)
+  const onSeed = (seed: number) => setDoc((d) => ({ ...d, seed }))
+  const onNewSeed = () => { setDoc((d) => ({ ...d, seed: newSeed(d.seed) })); showNotice(t('notice.seed')) }
+  // Variante (the dice): another style of the technique and a new seed, in one undo step.
+  const onVariant = () => {
+    const current = docRef.current
+    const { doc: next, index } = rollVariant(current, newSeed(current.seed))
+    setDoc(() => next)
+    showNotice(tf('notice.variant', { name: t(variantsOf(current.technique)[index].nameKey) }))
+  }
   const sliderGesture = { onPointerDown: gestureBegin, onPointerUp: gestureEnd }
   const onParam = (id: string, v: ParamValue, key?: string) => setDoc((d) => ({ ...d, params: { ...d.params, [id]: v } }), key)
   const onInkMode = (inkMode: InkMode) => setDoc((d) => {
@@ -349,6 +381,7 @@ export default function App() {
         hasImage={hasImage}
         technique={doc.technique}
         techniqueOn={doc.toggles.technique}
+        inkCount={doc.inks.length}
         universal={doc.universal}
         params={doc.params}
         onUniversal={onUniversal}
@@ -358,8 +391,8 @@ export default function App() {
       />
     )
     else if (prefs.printTab === 'inks') panel = <InksPanel doc={doc} onInkMode={onInkMode} onActiveInk={onActiveInk} onInkColor={onInkColor} />
-    else if (prefs.printTab === 'material') panel = <MaterialPanel toggles={doc.toggles} onToggle={onToggle} paper={doc.paper} onPaper={onPaper} gesture={sliderGesture} />
-    else panel = <PrintAdvancedPanel doc={doc} onToggle={onToggle} onSheet={onSheet} />
+    else if (prefs.printTab === 'material') panel = <MaterialPanel toggles={doc.toggles} onToggle={onToggle} paper={doc.paper} onPaper={onPaper} imperfections={doc.imperfections} onImperfections={onImperfections} gesture={sliderGesture} />
+    else panel = <PrintAdvancedPanel doc={doc} onToggle={onToggle} onSheet={onSheet} onSeed={onSeed} onNewSeed={onNewSeed} />
   } else {
     if (prefs.composeTab === 'advanced') panel = <ComposeAdvancedPanel sheetId={doc.sheetId} onSheet={onSheet} />
     else if (prefs.composeTab === 'move') panel = <MovePanel layer={selectedLayer} sheet={sheet} edit={layerEdit} />
@@ -447,7 +480,7 @@ export default function App() {
                 label={t('print.technique')}
                 onClick={() => setTechniqueOpen((o) => !o)}
               />
-              <IconButton className="solo" label={t('print.variant')} disabled /* Phase 06: Variante */><IconDice size={20} /></IconButton>
+              <IconButton className="solo" label={t('print.variant')} disabled={!hasImage} onClick={onVariant}><IconDice size={20} /></IconButton>
             </div>
           ) : (
             <div className="toolrow">

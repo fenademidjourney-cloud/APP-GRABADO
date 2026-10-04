@@ -7,6 +7,7 @@ import { DEFAULT_SHEET } from './sheet'
 import type { Layer } from './layer'
 import { DEFAULT_PAPER } from './paper'
 import type { Params } from '../engines/types'
+import { DEFAULT_IMPERFECTIONS, type ImperfectionSettings } from '../print/imperfections'
 
 export type InkMode = 'one' | 'two' | 'many'
 
@@ -25,19 +26,23 @@ export const MAX_INKS = 6
 /**
  * The universal controls (docs/PLANNING.md §E.2). Values in %; each engine maps them
  * to its own physical parameters (screen: detail = tone per pixel vs per cell,
- * pressure = dot gain, roughness = ragged dot edges).
+ * pressure = dot gain, roughness = ragged dot edges). Pressure, grain and
+ * registration also drive the impression model, with or without an engine.
  */
 export interface Universal {
-  contrast: number   // −100..100 · tone curve before printing
-  ink: number        // 0..150 · density of the ink film (100 = nominal)
-  detail: number     // 0..100
-  pressure: number   // 0..100 · 50 = the preset's own
-  roughness: number  // 0..100
+  contrast: number      // −100..100 · tone curve before printing
+  ink: number           // 0..150 · density of the ink film (100 = nominal)
+  detail: number        // 0..100
+  pressure: number      // 0..100 · 50 = the preset's own · paper contact, gain
+  roughness: number     // 0..100
+  grain: number         // 0..100 · mottle of the ink film
+  registration: number  // 0..100 · how far each pass drifts (print/registration.ts)
 }
 
 export interface PaperSettings {
   id: string         // model/paper.ts
   texture: number    // 0..100 · how much fibre and pulp show
+  light: number      // 0..100 · raking light over the paper's relief
 }
 
 export interface Doc {
@@ -50,6 +55,11 @@ export interface Doc {
   universal: Universal
   params: Params          // the technique engine's parameters (engines/*/params.ts)
   paper: PaperSettings
+  imperfections: ImperfectionSettings
+  /** Everything random in the print comes from this seed (util/seed.ts): same seed, same print. */
+  seed: number
+  /** The last style the dice (Variante) chose, so the next tap picks another; −1 = none. */
+  variant: number
   layers: Layer[]         // bottom to top
 }
 
@@ -85,8 +95,11 @@ export const DEFAULT_DOC: Doc = {
   inks: DEFAULT_INKS.two,
   activeInk: 0,
   toggles: { technique: true, inkTexture: true, imperfections: true, paper: true, color: true, registration: true },
-  universal: { contrast: 0, ink: 100, detail: 50, pressure: 50, roughness: 20 },
+  universal: { contrast: 0, ink: 100, detail: 50, pressure: 50, roughness: 20, grain: 40, registration: 25 },
   params: {},
-  paper: { id: DEFAULT_PAPER.id, texture: 60 },
+  paper: { id: DEFAULT_PAPER.id, texture: 60, light: 30 },
+  imperfections: DEFAULT_IMPERFECTIONS,
+  seed: 1,
+  variant: -1,
   layers: [],
 }
