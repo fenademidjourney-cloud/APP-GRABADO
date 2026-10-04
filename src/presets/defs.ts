@@ -155,7 +155,7 @@ export const PRESETS: Record<string, PresetDef> = {
   linocut: {
     engine: 'relief',
     impression: 'relief',
-    params: { threshold: 50, surface: 'lino', woodGrain: 0, grainAngle: 90, splinter: 8, printing: 'press', squash: 15, deboss: 20, pieces: 0 },
+    params: { threshold: 50, surface: 'lino', woodGrain: 0, grainAngle: 90, splinter: 8, gouges: 35, printing: 'press', squash: 15, deboss: 20, pieces: 0 },
     universal: { contrast: 15, ink: 100, detail: 55, pressure: 50, roughness: 15, grain: 40, registration: 25 },
     inkMode: 'one',
     inks: ['#1d1d1b'],
@@ -165,9 +165,9 @@ export const PRESETS: Record<string, PresetDef> = {
     advanced: RELIEF_ADVANCED,
     imperfections: { amount: 30, enabled: ['pressure', 'starved', 'dust'] },
     variants: [
-      { nameKey: 'variant.linoClean', params: { threshold: [45, 55], splinter: [0, 10], printing: ['press'] }, universal: { detail: [55, 75], roughness: [5, 15] }, imperfections: ['pressure', 'dust'], impAmount: [10, 25] },
-      { nameKey: 'variant.linoBold', params: { threshold: [38, 50] }, universal: { detail: [25, 45], contrast: [20, 40] }, imperfections: ['pressure', 'starved', 'dust'], impAmount: [25, 45] },
-      { nameKey: 'variant.linoBaren', params: { printing: ['baren'], splinter: [5, 20] }, universal: { detail: [45, 65], pressure: [35, 50], grain: [50, 70] }, imperfections: ['pressure', 'starved'], impAmount: [30, 50] },
+      { nameKey: 'variant.linoClean', params: { gouges: [25, 45], threshold: [45, 55], splinter: [0, 10], printing: ['press'] }, universal: { detail: [55, 75], roughness: [5, 15] }, imperfections: ['pressure', 'dust'], impAmount: [10, 25] },
+      { nameKey: 'variant.linoBold', params: { gouges: [0, 15], threshold: [38, 50] }, universal: { detail: [25, 45], contrast: [20, 40] }, imperfections: ['pressure', 'starved', 'dust'], impAmount: [25, 45] },
+      { nameKey: 'variant.linoBaren', params: { gouges: [40, 70], printing: ['baren'], splinter: [5, 20] }, universal: { detail: [45, 65], pressure: [35, 50], grain: [50, 70] }, imperfections: ['pressure', 'starved'], impAmount: [30, 50] },
       { nameKey: 'variant.linoHeavy', params: { squash: [25, 45] }, universal: { ink: [120, 145], pressure: [65, 85] }, imperfections: ['pressure', 'dust'], impAmount: [20, 35] },
     ],
   },

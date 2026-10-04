@@ -181,16 +181,48 @@ vec3 contrastSrgb(vec3 c) {
 }
 
 // Separation: non-negative least squares in absorbance space (print/ink.ts · separate).
+// Every support of 1–3 inks is solved exactly (with the ridge, unused columns are zero
+// and solve to 0, so one 3 × 3 system serves all sizes); the best non-negative one wins,
+// then a few coordinate-descent passes settle the upper bound.
+const float LAMBDA = 0.02;
 void separate(vec3 target, out float d[6]) {
   vec3 at = -log(max(target, vec3(0.002)));
   for (int k = 0; k < 6; k++) d[k] = 0.0;
-  for (int it = 0; it < 16; it++) {
+  float bestCost = dot(at, at);
+  int full = 1 << uInkCount;
+  for (int mask = 1; mask < 64; mask++) {
+    if (mask >= full) break;
+    int idx[3];
+    int m = 0;
+    for (int i = 0; i < 6; i++) {
+      if ((mask & (1 << i)) != 0) { if (m < 3) idx[m] = i; m++; }
+    }
+    if (m > 3) continue;
+    vec3 a0 = uInkA[idx[0]];
+    vec3 a1 = m > 1 ? uInkA[idx[1]] : vec3(0.0);
+    vec3 a2 = m > 2 ? uInkA[idx[2]] : vec3(0.0);
+    mat3 A = mat3(a0, a1, a2);
+    mat3 N = transpose(A) * A + mat3(LAMBDA);
+    vec3 sol = inverse(N) * (transpose(A) * at);
+    if (sol.x < 0.0 || (m > 1 && sol.y < 0.0) || (m > 2 && sol.z < 0.0)) continue;
+    vec3 r = A * sol - at;
+    float cost = dot(r, r) + LAMBDA * dot(sol, sol);
+    if (cost < bestCost - 1e-9) {
+      bestCost = cost;
+      for (int k = 0; k < 6; k++) d[k] = 0.0;
+      d[idx[0]] = sol.x;
+      if (m > 1) d[idx[1]] = sol.y;
+      if (m > 2) d[idx[2]] = sol.z;
+    }
+  }
+  for (int k = 0; k < 6; k++) d[k] = clamp(d[k], 0.0, 1.0);
+  for (int it = 0; it < 4; it++) {
     for (int k = 0; k < 6; k++) {
       if (k >= uInkCount) break;
       vec3 r = at;
       for (int j = 0; j < 6; j++) { if (j >= uInkCount) break; if (j != k) r -= uInkA[j] * d[j]; }
       vec3 a = uInkA[k];
-      d[k] = clamp(dot(r, a) / (dot(a, a) + 0.02), 0.0, 1.0);
+      d[k] = clamp(dot(r, a) / (dot(a, a) + LAMBDA), 0.0, 1.0);
     }
   }
 }

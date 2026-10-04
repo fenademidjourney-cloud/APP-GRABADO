@@ -721,7 +721,7 @@ export class Renderer {
     const lines = this.ensureLines(scene, this.analysis, analysisKey)
     // A frame whose callback ran long (the line geometry takes ~1 s) may never be
     // shown; ask for one more: everything is cached by then, so it is quick.
-    if (lines !== before) this.requestFrame()
+    if (this.lineGpu !== before) this.requestFrame()
     const linesKey = JSON.stringify([f, lines?.key ?? ''])
     if (linesKey !== this.frameLinesKey) {
       this.frameLinesKey = linesKey

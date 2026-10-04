@@ -57,3 +57,20 @@ describe('ink model', () => {
     for (const v of [0, 0.02, 0.5, 1]) expect(linearToSrgb(srgbToLinear(v))).toBeCloseTo(v, 6)
   })
 })
+
+describe('separation is exact where the inks allow it', () => {
+  it('a grey with red + black uses no red (strongly correlated inks)', () => {
+    const inks = [inkAbsorbance('#f15060'), inkAbsorbance('#1d1d1b')]
+    const g = srgbToLinear(0.55)
+    const d = separate([g, g, g], inks)
+    expect(d[0]).toBeLessThan(0.02)
+    expect(d[1]).toBeGreaterThan(0.1)
+  })
+
+  it('reproduces a colour made from 3 of 4 process inks', () => {
+    const inks = ['#00a3e0', '#e5007e', '#ffed00', '#1d1d1b'].map(inkAbsorbance)
+    const made = overprint([1, 1, 1], inks, [0.3, 0.6, 0.2, 0]) as RGB
+    const back = overprint([1, 1, 1], inks, separate(made, inks))
+    for (let ch = 0; ch < 3; ch++) expect(back[ch]).toBeCloseTo(made[ch], 2)
+  })
+})
