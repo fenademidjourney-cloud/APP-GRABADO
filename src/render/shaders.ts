@@ -322,7 +322,14 @@ uniform bool uIntaglio;
 uniform float uPlateTone;     // 0..1
 uniform float uPlateMargin;   // mm (0 = no plate mark)
 uniform float uInkRelief;     // 0..1
-// Technique engine (docs/PLANNING.md §C.2). 0 = continuous ink, 1 = screen, 2 = stencil, 3 = relief, 4 = line.
+// Grain engine (engines/grain/params.ts).
+uniform sampler2D uGrainTile; // equalised grain tile (R16F, repeat)
+uniform float uGrainCell;     // mm per tile pixel
+uniform float uGrainStroke;   // 0..1
+uniform float uGrainAngle;    // radians
+uniform float uGrainSharp;    // 0..1
+uniform float uGrainScum;     // 0..1
+// Technique engine (docs/PLANNING.md §C.2). 0 continuous ink · 1 screen · 2 stencil · 3 relief · 4 line · 5 grain.
 uniform int uEngine;
 uniform bool uFM;             // stochastic screen instead of AM dots
 uniform int uShape;           // engines/screen/spot.ts · SHAPE_INDEX
@@ -678,7 +685,45 @@ float filmFor(int k, float t) {
 // The matrix of ink k at plate position pm (docs/PLANNING.md §C.1): x = area covered,
 // y = film (fraction of a full film), z = the plate's tone as dot % (separation films).
 // growMm widens the marks (bleed).
+// ---- Grain -----------------------------------------------------------------------
+// The grain threshold at plate position pm (uniform 0..1). Two readings of the tile at
+// different scales and angles never repeat together; their mean is made uniform again
+// with the exact CDF of the mean of two uniforms, so coverage still equals tone.
+float grainAt(int k, vec2 pm) {
+  mat2 S = rot(-uGrainAngle);
+  vec2 q = S * pm;
+  q.x /= 1.0 + 1.4 * uGrainStroke;            // the crayon drags the grain along its stroke
+  float tile = uGrainCell * 512.0;
+  vec3 o = hash3(ivec2(k, 3), sScreen ^ 401u);
+  float g1 = texture(uGrainTile, q / tile + o.xy).r;
+  float g2 = texture(uGrainTile, rot(0.65) * q / (tile * 1.13) + o.yz).r;
+  float g = 0.5 * (g1 + g2);
+  return g < 0.5 ? 2.0 * g * g : 1.0 - 2.0 * (1.0 - g) * (1.0 - g);
+}
+
+vec3 grainPlate(int k, vec2 pm) {
+  float t = uSimplify ? smoothToneAt(k, pm) : toneAt(k, uvOfMm(pm));
+  // Crayon strokes: the tone gathers in bands along the stroke.
+  if (uGrainStroke > 0.0) {
+    vec2 q = rot(-uGrainAngle) * pm;
+    t = clamp(t * (1.0 + uGrainStroke * 0.3 * (vnoise(q * vec2(0.12, 1.6), sScreen ^ 402u) - 0.5)), 0.0, 1.0);
+  }
+  float g = grainAt(k, pm);
+  // Planographic edge: a little soft; sharper with ASPEREZA (a broken crayon).
+  float w = mix(0.1, 0.012, uGrainSharp) + fwidth(g) * 0.5;
+  float cov = smoothstep(g - w, g + w, t);
+  if (t < 0.002) cov = 0.0;
+  // Scumming: grease catching on the open grain, even where nothing was drawn.
+  cov = max(cov, 0.55 * smoothstep(uGrainScum * 0.035, 0.0, g) * step(0.001, uGrainScum));
+  // Zoomed out, a tooth smaller than a pixel: show the tone it makes.
+  float toothPx = uGrainCell * 6.0 * uPxPerMm;
+  float lod = uOutput != 0 ? smoothstep(0.4, 1.0, toothPx) : smoothstep(0.6, 1.6, toothPx);
+  cov = mix(t, cov, lod);
+  return vec3(cov, 1.0, cov);
+}
+
 vec3 plate(int k, vec2 pm, float growMm) {
+  if (uEngine == 5) return grainPlate(k, pm);
   if (uEngine == 3) return reliefPlate(k, pm, growMm);
   if (uEngine == 4) {
     float c = linesAt(k, pm);

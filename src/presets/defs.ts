@@ -8,6 +8,7 @@ import { SCREEN_PARAMS } from '../engines/screen/params'
 import { STENCIL_PARAMS } from '../engines/stencil/params'
 import { RELIEF_PARAMS } from '../engines/relief/params'
 import { LINE_PARAMS } from '../engines/line/params'
+import { GRAIN_PARAMS } from '../engines/grain/params'
 import type { InkMode, PaperSettings, Universal } from '../model/doc'
 import type { ImperfectionId, ImperfectionSettings } from '../print/imperfections'
 import type { TextKey } from '../i18n'
@@ -53,6 +54,7 @@ export const ENGINE_PARAMS: Record<EngineId, ParamDef[]> = {
   stencil: STENCIL_PARAMS,
   relief: RELIEF_PARAMS,
   line: LINE_PARAMS,
+  grain: GRAIN_PARAMS,
 }
 
 const LINE_ADVANCED = ['angle', 'follow', 'layers', 'swell', 'taper', 'polarity', 'plateTone', 'plateMargin', 'inkRelief', 'roughness', 'grain', 'registration']
@@ -63,6 +65,28 @@ const RISO_ADVANCED = ['fill', 'levels', 'angle', 'gain', 'maxDensity', 'masterD
 const SCREEN_ADVANCED = ['fill', 'levels', 'lpi', 'angle', 'gain', 'mesh', 'pressure', 'roughness', 'grain', 'filmGrain', 'fmDot']
 
 export const PRESETS: Record<string, PresetDef> = {
+  // Stone lithography: crayon drawn on a grained limestone; the grease catches on the
+  // tooth, so every tone is built from grain. Planographic: even contact, a slightly
+  // soft edge, a little scumming.
+  'stone-lithography': {
+    engine: 'grain',
+    impression: 'planographic',
+    params: { medium: 'crayon', grainSize: 110, stroke: 35, strokeAngle: 60, scum: 15 },
+    universal: { contrast: 10, ink: 100, detail: 70, pressure: 50, roughness: 40, grain: 25, registration: 15 },
+    inkMode: 'one',
+    inks: ['#231f1c'],
+    inkOpacity: [0],
+    paper: { id: 'ivory', texture: 50, light: 25 },
+    essentials: ['grainSize', 'detail', 'ink', 'contrast', 'medium'],
+    advanced: ['stroke', 'strokeAngle', 'scum', 'roughness', 'pressure', 'grain', 'registration'],
+    imperfections: { amount: 20, enabled: ['pressure', 'dust'] },
+    variants: [
+      { nameKey: 'variant.lithoFine', params: { medium: ['crayon'], grainSize: [60, 90], stroke: [10, 30] }, universal: { roughness: [20, 40], detail: [70, 90] }, imperfections: ['pressure', 'dust'], impAmount: [10, 25] },
+      { nameKey: 'variant.lithoCoarse', params: { medium: ['crayon'], grainSize: [150, 240], stroke: [40, 75] }, universal: { roughness: [45, 75] }, imperfections: ['pressure', 'dust'], impAmount: [20, 35] },
+      { nameKey: 'variant.lithoTusche', params: { medium: ['tusche'], grainSize: [120, 220], scum: [10, 30] }, universal: { detail: [55, 80], roughness: [30, 60] }, imperfections: ['pressure', 'dust', 'stains'], impAmount: [20, 40] },
+      { nameKey: 'variant.lithoCrachis', params: { medium: ['crachis'], grainSize: [150, 260], scum: [0, 15] }, universal: { detail: [60, 85], roughness: [50, 80] }, imperfections: ['pressure', 'dust'], impAmount: [15, 30] },
+    ],
+  },
   // Copperplate engraving: the burin ploughs clean lines that swell with the tone,
   // enter and leave tapered, wrap around the forms and cross in the shadows; printed
   // from a wiped plate on damp paper, which keeps the plate mark.

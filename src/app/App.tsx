@@ -21,6 +21,7 @@ import { resolveScreen } from '../engines/screen/params'
 import { resolveStencil } from '../engines/stencil/params'
 import { resolveRelief } from '../engines/relief/params'
 import { resolveLine } from '../engines/line/params'
+import { resolveGrain } from '../engines/grain/params'
 import type { PrintScene as PS } from '../render/scene'
 import type { ParamValue } from '../engines/types'
 import type { PrintScene } from '../render/scene'
@@ -224,6 +225,7 @@ export default function App() {
       stencil: stencil?.stencil,
       relief,
       lines,
+      grain: engine === 'grain' ? resolveGrain(doc.params, u) : undefined,
     }
   }, [doc.inks, doc.universal, doc.toggles, doc.paper, doc.technique, doc.params, doc.seed, doc.imperfections])
   const [screenLod, setScreenLod] = useState(false)

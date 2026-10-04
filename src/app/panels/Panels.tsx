@@ -42,6 +42,7 @@ const UNIVERSAL_DEFS: Record<UniversalKey, { label: TextKey; hint: TextKey; min:
 
 /** Controls that don't apply to the current settings (e.g. lpi with a stochastic screen). */
 function inapplicable(engine: string, params: Params): string[] {
+  if (engine === 'grain') return params.medium === 'crayon' ? [] : ['stroke', 'strokeAngle']
   if (engine === 'relief') return params.surface === 'wood' ? [] : ['woodGrain', 'grainAngle']
   if (engine === 'stencil') return params.fill === 'solid' ? ['lpi', 'angle', 'fmDot', 'gain'] : params.fill === 'fm' ? ['lpi', 'angle'] : ['fmDot']
   if (engine !== 'screen') return []
@@ -82,7 +83,7 @@ export function EffectPanel({ hasImage, technique, techniqueOn, inkCount, univer
           min={u.min}
           max={u.max}
           gesture={gesture}
-          hint={t(id === 'detail' && engine === 'stencil' ? 'effect.detailHintStencil' : id === 'detail' && engine === 'relief' ? 'effect.detailHintRelief' : id === 'detail' && engine === 'line' ? 'effect.detailHintLine' : u.hint)}
+          hint={t(id === 'detail' && engine === 'stencil' ? 'effect.detailHintStencil' : id === 'detail' && engine === 'relief' ? 'effect.detailHintRelief' : id === 'detail' && engine === 'line' ? 'effect.detailHintLine' : id === 'detail' && engine === 'grain' ? 'effect.detailHintGrain' : u.hint)}
           onChange={(n) => onUniversal(id as UniversalKey, n)}
         />,
       )

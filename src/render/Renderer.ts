@@ -29,6 +29,8 @@ import { buildLines, LINE_STRIDE, type ToneField } from '../engines/line/flow'
 import { maxDisplacementMm } from '../print/registration'
 import { pieceIds } from '../analysis/components'
 import { SURFACE_INDEX } from '../engines/relief/params'
+import { grainTile, type GrainKind } from '../analysis/grainTiles'
+import { GRAIN_TILE } from '../engines/grain/params'
 import { sheetRect } from './view'
 import type { ExportJob, FromRenderer, PrintScene, Scene, SceneColors, Viewport } from './scene'
 
@@ -79,6 +81,8 @@ export class Renderer {
   private blurProg!: Program
   private lineProg!: Program
   private lineGpu: LineGpu | null = null
+  /** Grain tiles, made the first time an engine asks for one (~0.2 s each). */
+  private grainTex = new Map<GrainKind, WebGLTexture>()
   private frameLinesKey = ''
   private unitQuad!: WebGLBuffer
   private layerBuf!: WebGLBuffer
@@ -107,6 +111,7 @@ export class Renderer {
       this.targets = null
       this.analysis = null
       this.lineGpu = null
+    this.grainTex.clear()
       this.emit({ type: 'error', code: 'context-lost' })
     })
     c.addEventListener('webglcontextrestored', () => {
@@ -136,6 +141,7 @@ export class Renderer {
     this.blurProg = createProgram(gl, QUAD_VS, BLUR_FS)
     this.lineProg = createProgram(gl, LINE_VS, LINE_FS)
     this.lineGpu = null
+    this.grainTex.clear()
     this.unitQuad = gl.createBuffer()!
     gl.bindBuffer(gl.ARRAY_BUFFER, this.unitQuad)
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]), gl.STATIC_DRAW)
@@ -432,7 +438,7 @@ export class Renderer {
     this.blurPass(a.layers.tone, a.blur, f, [tap / w, 0])
     this.blurPass(a.blur, a.mass, f, [0, tap / h])
     // The stencil's simplification: the tone smoothed before the stencil is cut.
-    const sigma = scene.print.stencil?.simplifyMm ?? scene.print.relief?.simplifyMm ?? 0
+    const sigma = scene.print.stencil?.simplifyMm ?? scene.print.relief?.simplifyMm ?? scene.print.grain?.simplifyMm ?? 0
     // Below an analysis pixel the full-resolution tone is sharper than any smoothing.
     a.simplify = sigma * k >= 1
     if (a.simplify) {
@@ -453,6 +459,21 @@ export class Renderer {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, pieceIds(inked, w, h, 2))
     }
     return a
+  }
+
+  private grainTexture(kind: GrainKind): WebGLTexture {
+    let tex = this.grainTex.get(kind)
+    if (tex) return tex
+    const gl = this.gl
+    tex = gl.createTexture()!
+    gl.bindTexture(gl.TEXTURE_2D, tex)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, GRAIN_TILE, GRAIN_TILE, 0, gl.RED, gl.FLOAT, grainTile(kind, GRAIN_TILE, 1))
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+    this.grainTex.set(kind, tex)
+    return tex
   }
 
   /** Read the first target of a pair (inks 1–4) back to the CPU; rows bottom-up. */
@@ -564,7 +585,7 @@ export class Renderer {
     gl.uniform1i(cp.uniform('uFill'), st?.fill ?? 0)
     gl.uniform1i(cp.uniform('uLevels'), st?.levels ?? 0)
     const rel = pr.relief
-    gl.uniform1i(cp.uniform('uSimplify'), (st || rel) && a.simplify ? 1 : 0)
+    gl.uniform1i(cp.uniform('uSimplify'), (st || rel || pr.grain) && a.simplify ? 1 : 0)
     gl.uniform1f(cp.uniform('uRelThreshold'), rel?.threshold ?? 0.5)
     gl.uniform1i(cp.uniform('uRelSurface'), rel?.surface ?? SURFACE_INDEX.metal)
     gl.uniform1f(cp.uniform('uRelGrain'), rel?.woodGrain ?? 0)
@@ -622,7 +643,18 @@ export class Renderer {
     gl.uniform2f(cp.uniform('uSheetMm'), sheet.widthMm, sheet.heightMm)
     gl.uniform1f(cp.uniform('uPxPerMm'), f.k)
     const sc = pr.screen
-    gl.uniform1i(cp.uniform('uEngine'), ln ? 4 : rel ? 3 : st ? 2 : sc ? 1 : 0)
+    const gr = pr.grain
+    gl.uniform1i(cp.uniform('uEngine'), gr ? 5 : ln ? 4 : rel ? 3 : st ? 2 : sc ? 1 : 0)
+    if (gr) {
+      this.bindTex(cp, 12, 'uGrainTile', this.grainTexture(gr.kind))
+      gl.uniform1f(cp.uniform('uGrainCell'), gr.cellMm)
+      gl.uniform1f(cp.uniform('uGrainStroke'), gr.stroke)
+      gl.uniform1f(cp.uniform('uGrainAngle'), (gr.strokeAngle * Math.PI) / 180)
+      gl.uniform1f(cp.uniform('uGrainSharp'), gr.sharp)
+      gl.uniform1f(cp.uniform('uGrainScum'), gr.scum)
+    } else {
+      this.bindTex(cp, 12, 'uGrainTile', this.blueNoise)
+    }
     if (sc) {
       gl.uniform1i(cp.uniform('uFM'), sc.fm ? 1 : 0)
       gl.uniform1i(cp.uniform('uShape'), sc.shape)
@@ -645,7 +677,7 @@ export class Renderer {
   /** Everything the analysis fields depend on. */
   private analysisKeyOf(scene: Scene): string {
     const pr = scene.print
-    return JSON.stringify([scene.sheet, scene.layers, pr.inks, pr.contrast, pr.stencil?.simplifyMm ?? 0, pr.relief?.simplifyMm ?? 0, pr.relief?.threshold ?? 0, (pr.relief?.pieces ?? 0) > 0, this.textures.size])
+    return JSON.stringify([scene.sheet, scene.layers, pr.inks, pr.contrast, pr.stencil?.simplifyMm ?? 0, pr.relief?.simplifyMm ?? 0, pr.grain?.simplifyMm ?? 0, pr.relief?.threshold ?? 0, (pr.relief?.pieces ?? 0) > 0, this.textures.size])
   }
 
   /** The on-screen preview. */

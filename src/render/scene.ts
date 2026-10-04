@@ -10,6 +10,7 @@ import type { StencilUniforms } from '../engines/stencil/params'
 import type { ReliefUniforms } from '../engines/relief/params'
 import type { LineUniforms } from '../engines/line/params'
 import type { LineBuild } from '../engines/line/flow'
+import type { GrainUniforms } from '../engines/grain/params'
 
 export interface SceneColors {
   card: string      // the canvas card (token --card)
@@ -41,6 +42,7 @@ export interface PrintScene {
   relief?: ReliefUniforms
   /** Line geometry (built once on the CPU) and, for the line engine, how it prints. Relief uses it for gouges. */
   lines?: { build: LineBuild; print?: LineUniforms }
+  grain?: GrainUniforms
 }
 
 export interface Scene {
